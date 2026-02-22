@@ -1,0 +1,80 @@
+<?xml version="1.0"?>
+<!--
+  Launch file that starts the control node, robot manager, and spawns controllers.
+  Based on startup.launch.py but excludes robot_state_publisher.
+  Use together with description.launch.xml for a complete setup.
+-->
+<launch>
+  <!-- Robot configuration arguments -->
+  <arg name="robot_model" default="kr6_r700_sixx" description="Name of the robot model"/>
+  <arg name="robot_family" default="agilus" description="Robot family (e.g., agilus, cybertech, quantec)"/>
+  <arg name="namespace" default="" description="Namespace for the robot"/>
+
+  <!-- URDF xacro arguments -->
+  <arg name="mode" default="hardware" description="Mode: hardware or mock"/>
+  <arg name="use_gpio" default="false" description="Enable GPIO support"/>
+  <arg name="driver_version" default="rsi_only" description="Driver version: rsi_only, eki_rsi, or mxa_rsi"/>
+  <arg name="client_ip" default="0.0.0.0" description="Client IP address"/>
+  <arg name="client_port" default="59152" description="RSI client port"/>
+  <arg name="mxa_client_port" default="1337" description="MXA client port"/>
+  <arg name="controller_ip" default="0.0.0.0" description="Controller IP address"/>
+  <arg name="roundtrip_time" default="4000" description="RSI roundtrip time in microseconds"/>
+  <arg name="verify_robot_model" default="true" description="Verify robot model on startup"/>
+
+  <!-- Robot position arguments -->
+  <arg name="x" default="0" description="X position of robot base"/>
+  <arg name="y" default="0" description="Y position of robot base"/>
+  <arg name="z" default="0" description="Z position of robot base"/>
+  <arg name="roll" default="0" description="Roll angle of robot base"/>
+  <arg name="pitch" default="0" description="Pitch angle of robot base"/>
+  <arg name="yaw" default="0" description="Yaw angle of robot base"/>
+
+  <!-- Controller configuration arguments -->
+  <arg name="controller_config" default="$(find-pkg-share kuka_rsi_driver)/config/ros2_controller_config_extended.yaml" description="Path to controller configuration file"/>
+  <arg name="jtc_config" default="$(find-pkg-share kuka_rsi_driver)/config/joint_trajectory_controller_config.yaml" description="Path to joint trajectory controller config"/>
+  <arg name="gpio_config" default="$(find-pkg-share kuka_rsi_driver)/config/gpio_controller_config.yaml" description="Path to GPIO controller config"/>
+
+  <!-- Compute tf_prefix based on namespace -->
+  <let name="tf_prefix" value="" if="$(eval '\'$(var namespace)\' == \'\'')" />
+  <let name="tf_prefix" value="$(var namespace)_" unless="$(eval '\'$(var namespace)\' == \'\'')" />
+
+  <!-- Generate robot description using xacro -->
+  <let name="robot_description" value="$(command 'xacro $(find-pkg-share kuka_$(var robot_family)_support)/urdf/$(var robot_model).urdf.xacro mode:=$(var mode) use_gpio:=$(var use_gpio) driver_version:=$(var driver_version) client_port:=$(var client_port) mxa_client_port:=$(var mxa_client_port) client_ip:=$(var client_ip) controller_ip:=$(var controller_ip) prefix:=$(var tf_prefix) x:=$(var x) y:=$(var y) z:=$(var z) roll:=$(var roll) pitch:=$(var pitch) yaw:=$(var yaw) roundtrip_time:=$(var roundtrip_time) verify_robot_model:=$(var verify_robot_model)')"/>
+
+  <!-- Controller manager node name -->
+  <let name="controller_manager_node" value="controller_manager" if="$(eval '\'$(var namespace)\' == \'\'')" />
+  <let name="controller_manager_node" value="$(var namespace)/controller_manager" unless="$(eval '\'$(var namespace)\' == \'\'')" />
+
+  <!-- Control Node -->
+  <node pkg="kuka_drivers_core" exec="control_node" namespace="$(var namespace)">
+    <param name="robot_description" value="$(var robot_description)"/>
+    <param from="$(var controller_config)"/>
+  </node>
+
+  <!-- Robot Manager Node (extended version) -->
+  <node pkg="kuka_rsi_driver" exec="robot_manager_node_extended" name="robot_manager" namespace="$(var namespace)">
+    <param from="$(find-pkg-share kuka_rsi_driver)/config/driver_config.yaml"/>
+    <param name="robot_model" value="$(var robot_model)"/>
+    <param name="use_gpio" value="$(var use_gpio)"/>
+  </node>
+
+  <!-- Spawn Controllers -->
+  <!-- Joint State Broadcaster -->
+  <node pkg="controller_manager" exec="spawner" args="joint_state_broadcaster -c $(var controller_manager_node) --inactive"/>
+
+  <!-- Joint Trajectory Controller -->
+  <node pkg="controller_manager" exec="spawner" args="joint_trajectory_controller -c $(var controller_manager_node) --param-file $(var jtc_config) --inactive"/>
+
+  <!-- Event Broadcaster -->
+  <node pkg="controller_manager" exec="spawner" args="event_broadcaster -c $(var controller_manager_node) --inactive"/>
+
+  <!-- Control Mode Handler -->
+  <node pkg="controller_manager" exec="spawner" args="control_mode_handler -c $(var controller_manager_node) --inactive"/>
+
+  <!-- KSS Message Handler -->
+  <node pkg="controller_manager" exec="spawner" args="kss_message_handler -c $(var controller_manager_node) --inactive"/>
+
+  <!-- GPIO Controller (conditional on use_gpio) -->
+  <node pkg="controller_manager" exec="spawner" args="gpio_controller -c $(var controller_manager_node) --param-file $(var gpio_config) --inactive" if="$(var use_gpio)"/>
+
+</launch>
