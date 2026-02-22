@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<!--
+  Launch file that loads the KUKA robot description and starts robot_state_publisher.
+  Based on startup.launch.py but only includes description and robot_state_publisher.
+-->
+<launch>
+  <!-- Robot configuration arguments -->
+  <arg name="robot_model" default="kr10_r900_2" description="Name of the robot model"/>
+  <arg name="robot_family" default="agilus" description="Robot family (e.g., agilus, cybertech, quantec)"/>
+  <arg name="namespace" default="" description="Namespace for the robot"/>
+
+  <!-- URDF xacro arguments -->
+  <arg name="mode" default="hardware" description="Mode: hardware or mock"/>
+  <arg name="use_gpio" default="true" description="Enable GPIO support"/>
+  <arg name="driver_version" default="eki_rsi" description="Driver version: rsi_only, eki_rsi, or mxa_rsi"/>
+  <arg name="client_ip" default="10.23.23.28" description="Client IP address"/>
+  <arg name="client_port" default="28283" description="RSI client port"/>
+  <arg name="mxa_client_port" default="1337" description="MXA client port"/>
+  <arg name="controller_ip" default="10.28.23.240" description="Controller IP address"/>
+  <arg name="roundtrip_time" default="4000" description="RSI roundtrip time in microseconds"/>
+  <!-- for now no verification becase of the issue -->
+  <arg name="verify_robot_model" default="false" description="Verify robot model on startup"/>
+
+  <!-- Robot position arguments -->
+  <arg name="x" default="0" description="X position of robot base"/>
+  <arg name="y" default="0" description="Y position of robot base"/>
+  <arg name="z" default="0" description="Z position of robot base"/>
+  <arg name="roll" default="0" description="Roll angle of robot base"/>
+  <arg name="pitch" default="0" description="Pitch angle of robot base"/>
+  <arg name="yaw" default="0" description="Yaw angle of robot base"/>
+
+  <!-- Compute tf_prefix based on namespace -->
+  <let name="tf_prefix" value="" if="$(eval '\'$(var namespace)\' == \'\'')" />
+  <let name="tf_prefix" value="$(var namespace)_" unless="$(eval '\'$(var namespace)\' == \'\'')" />
+
+  <!-- Generate robot description using xacro -->
+  <let name="robot_description" value="$(command 'xacro $(find-pkg-share kuka_$(var robot_family)_support)/urdf/$(var robot_model).urdf.xacro mode:=$(var mode) use_gpio:=$(var use_gpio) driver_version:=$(var driver_version) client_port:=$(var client_port) mxa_client_port:=$(var mxa_client_port) client_ip:=$(var client_ip) controller_ip:=$(var controller_ip) prefix:=$(var tf_prefix) x:=$(var x) y:=$(var y) z:=$(var z) roll:=$(var roll) pitch:=$(var pitch) yaw:=$(var yaw) roundtrip_time:=$(var roundtrip_time) verify_robot_model:=$(var verify_robot_model)')"/>
+
+  <!-- Robot State Publisher -->
+  <node pkg="robot_state_publisher" exec="robot_state_publisher" namespace="$(var namespace)" output="both">
+    <param name="robot_description" value="$(var robot_description)"/>
+  </node>
+
+</launch>
