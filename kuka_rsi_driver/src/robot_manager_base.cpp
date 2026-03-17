@@ -35,7 +35,7 @@ RobotManagerBase::RobotManagerBase() : kuka_drivers_core::ROS2BaseLCNode("robot_
 
   this->registerStaticParameter<std::string>(
     "controller_manager_name", "controller_manager",
-    kuka_drivers_core::ParameterSetAcccessRights{false, false},
+    kuka_drivers_core::ParameterSetAccessRights{false, false},
     [this](const std::string cm_name){
         controller_manager_name_ = cm_name;
         return true;
