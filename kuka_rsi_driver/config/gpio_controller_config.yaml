@@ -5,10 +5,10 @@
       - gpio
     command_interfaces:
       gpio:
-        - interfaces:
+        interfaces:
            - "01"
     state_interfaces:
       gpio:
-        - interfaces:
+        interfaces:
            - "01"
            - "02"
