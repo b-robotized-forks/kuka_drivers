@@ -86,6 +86,7 @@ protected:
   rclcpp::CallbackGroup::SharedPtr cbg_;
 
   std::string robot_model_;
+  std::string controller_manager_name_;
   bool use_gpio_ = false;
   std::string position_controller_name_;
 

@@ -27,6 +27,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def launch_setup(context, *args, **kwargs):
+    controller_manager_name = LaunchConfiguration("controller_manager_name")
     robot_model = LaunchConfiguration("robot_model")
     robot_family = LaunchConfiguration("robot_family")
     mode = LaunchConfiguration("mode")
@@ -249,6 +250,7 @@ def launch_setup(context, *args, **kwargs):
 
 def generate_launch_description():
     launch_arguments = []
+    launch_arguments.append(DeclareLaunchArgument("controller_manager_name", default_value="b_controlled_box_cm"))
     launch_arguments.append(DeclareLaunchArgument("robot_model", default_value="kr6_r700_sixx"))
     launch_arguments.append(DeclareLaunchArgument("robot_family", default_value="agilus"))
     launch_arguments.append(DeclareLaunchArgument("mode", default_value="hardware"))
