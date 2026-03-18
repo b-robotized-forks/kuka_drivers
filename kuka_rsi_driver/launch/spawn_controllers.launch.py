@@ -25,6 +25,7 @@ def launch_setup(context, *args, **kwargs):
     ns = LaunchConfiguration("namespace")
     jtc_config = LaunchConfiguration("jtc_config")
     gpio_config = LaunchConfiguration("gpio_config")
+    controller_manager_name = LaunchConfiguration("controller_manager_name")
 
     # Spawn controllers
     def controller_spawner(controller_name, param_file=None, activate=False):
@@ -77,6 +78,7 @@ def generate_launch_description():
     launch_arguments.append(
         DeclareLaunchArgument("use_gpio", default_value="false", choices=["true", "false"])
     )
+    launch_arguments.append(DeclareLaunchArgument("controller_manager_name", default_value="b_controlled_box_cm"))
     launch_arguments.append(
         DeclareLaunchArgument(
             "driver_version",
