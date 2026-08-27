@@ -1,87 +1,18 @@
 <?xml version="1.0"?>
-<!-- TODO: Needs to be extended for gripper/gpio -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:macro name="gpio_config">
     <gpio name="gpio">
       <!-- Example on how to fill GPIO fields, used by the example configuration-->
-      <command_interface name="suction_1" data_type="BOOL"> <!-- 33 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </command_interface>
-      <command_interface name="suction_2" data_type="BOOL"> <!-- 34 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </command_interface>
-      <command_interface name="suction_3" data_type="BOOL"> <!-- 35 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </command_interface>
-      <command_interface name="suction_4" data_type="BOOL"> <!-- 36 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </command_interface>
-      <command_interface name="retract_1" data_type="BOOL"> <!-- 39 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </command_interface>
-      <command_interface name="extend_1" data_type="BOOL"> <!-- 40 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </command_interface>
-      <command_interface name="retract_2" data_type="BOOL"> <!-- 41 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </command_interface>
-      <command_interface name="extend_2" data_type="BOOL"> <!-- 42 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </command_interface>
-      <command_interface name="retract_3" data_type="BOOL"> <!-- 43 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </command_interface>
-      <command_interface name="extend_3" data_type="BOOL"> <!-- 44 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </command_interface>
-      <command_interface name="retract_4" data_type="BOOL"> <!-- 45 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </command_interface>
-      <command_interface name="extend_4" data_type="BOOL"> <!-- 46 -->
+      <command_interface name="01" data_type="BOOL">
         <limits enable="false"/>
         <param name="initial_value">0.0</param>
       </command_interface>
 
-      <state_interface name="extend_check_1" data_type="BOOL"> <!-- 132 -->
+      <state_interface name="01" data_type="BOOL">
         <limits enable="false"/>
         <param name="initial_value">0.0</param>
       </state_interface>
-      <state_interface name="extend_check_3" data_type="BOOL">  <!-- 133 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </state_interface>
-      <state_interface name="retract_check_1" data_type="BOOL"> <!-- 134 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </state_interface>
-      <state_interface name="retract_check_3" data_type="BOOL"> <!-- 135 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </state_interface>
-      <state_interface name="extend_check_2" data_type="BOOL"> <!-- 136 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </state_interface>
-      <state_interface name="extend_check_4" data_type="BOOL"> <!-- 137 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </state_interface>
-      <state_interface name="retract_check_2" data_type="BOOL"> <!-- 138 -->
-        <limits enable="false"/>
-        <param name="initial_value">0.0</param>
-      </state_interface>
-      <state_interface name="retract_check_4" data_type="BOOL"> <!-- 139 -->
+      <state_interface name="02" data_type="BOOL">
         <limits enable="false"/>
         <param name="initial_value">0.0</param>
       </state_interface>
