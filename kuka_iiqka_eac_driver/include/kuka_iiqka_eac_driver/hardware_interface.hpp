@@ -17,6 +17,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -74,6 +75,13 @@ public:
   KUKA_IIQKA_EAC_DRIVER_PUBLIC void reset_cycle_count() { cycle_count_ = 0; }
 
 private:
+  KUKA_IIQKA_EAC_DRIVER_LOCAL bool CheckJointInterfaces(
+    const hardware_interface::ComponentInfo & joint) const;
+  KUKA_IIQKA_EAC_DRIVER_LOCAL bool CheckJointCommandInterfaces(
+    const hardware_interface::ComponentInfo & joint) const;
+  KUKA_IIQKA_EAC_DRIVER_LOCAL bool CheckJointStateInterfaces(
+    const hardware_interface::ComponentInfo & joint) const;
+
   KUKA_IIQKA_EAC_DRIVER_LOCAL bool SetupRobot();
   KUKA_IIQKA_EAC_DRIVER_LOCAL bool SetupQoS();
 
@@ -88,8 +96,12 @@ private:
   std::vector<double> hw_torque_states_;
 
   double hw_control_mode_command_ = 0;
+  double interpolation_count_command_ = 0;
+  uint32_t last_interpolation_count_command_ = 0;
+  bool interpolation_count_initialized_ = false;
   double server_state_ = 0;
   int cycle_count_ = 0;
+  std::string interface_prefix_;
 
   std::mutex event_mutex_;
 
@@ -99,6 +111,7 @@ private:
     kuka_drivers_core::HardwareEvent::HARDWARE_EVENT_UNSPECIFIED;
 
   bool msg_received_;
+  bool is_async_hardware_ = false;
 };
 }  // namespace kuka_eac
 
