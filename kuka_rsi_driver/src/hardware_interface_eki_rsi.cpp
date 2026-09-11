@@ -47,35 +47,41 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_init(
   cycle_time_command_ = 0.0;
   hw_control_mode_command_ = 0.0;
 
+  control_mode_command_name_ =
+    std::string(hardware_interface::CONFIG_PREFIX) + "/" + hardware_interface::CONTROL_MODE;
+  cycle_time_command_name_ =
+    std::string(hardware_interface::CONFIG_PREFIX) + "/" + hardware_interface::CYCLE_TIME;
+
   return CallbackReturn::SUCCESS;
 }
 
-std::vector<hardware_interface::CommandInterface>
-KukaEkiRsiHardwareInterface::export_command_interfaces()
+std::vector<hardware_interface::InterfaceDescription>
+KukaEkiRsiHardwareInterface::export_unlisted_command_interface_descriptions()
 {
-  std::vector<hardware_interface::CommandInterface> command_interfaces;
+  auto descriptions = KukaRSIHardwareInterfaceBase::export_unlisted_command_interface_descriptions();
 
-  command_interfaces = KukaRSIHardwareInterfaceBase::export_command_interfaces();
+  hardware_interface::InterfaceInfo control_mode_info{};
+  control_mode_info.name = hardware_interface::CONTROL_MODE;
+  control_mode_info.initial_value = "0";
+  descriptions.emplace_back(hardware_interface::CONFIG_PREFIX, control_mode_info);
 
-  command_interfaces.emplace_back(
-    hardware_interface::CONFIG_PREFIX, hardware_interface::CONTROL_MODE, &hw_control_mode_command_);
+  hardware_interface::InterfaceInfo cycle_time_info{};
+  cycle_time_info.name = hardware_interface::CYCLE_TIME;
+  cycle_time_info.initial_value = "0";
+  descriptions.emplace_back(hardware_interface::CONFIG_PREFIX, cycle_time_info);
 
-  command_interfaces.emplace_back(
-    hardware_interface::CONFIG_PREFIX, hardware_interface::CYCLE_TIME, &cycle_time_command_);
-
-  return command_interfaces;
+  return descriptions;
 }
 
-std::vector<hardware_interface::StateInterface>
-KukaEkiRsiHardwareInterface::export_state_interfaces()
+std::vector<hardware_interface::InterfaceDescription>
+KukaEkiRsiHardwareInterface::export_unlisted_state_interface_descriptions()
 {
-  std::vector<hardware_interface::StateInterface> state_interfaces;
+  auto descriptions = KukaRSIHardwareInterfaceBase::export_unlisted_state_interface_descriptions();
 
-  state_interfaces = KukaRSIHardwareInterfaceBase::export_state_interfaces();
+  auto status_descriptions = status_manager_.ExportUnlistedStateInterfaceDescriptions();
+  descriptions.insert(descriptions.end(), status_descriptions.begin(), status_descriptions.end());
 
-  status_manager_.RegisterStateInterfaces(state_interfaces);
-
-  return state_interfaces;
+  return descriptions;
 }
 
 CallbackReturn KukaEkiRsiHardwareInterface::on_configure(const rclcpp_lifecycle::State &)
@@ -132,6 +138,9 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
 
 CallbackReturn KukaEkiRsiHardwareInterface::on_activate(const rclcpp_lifecycle::State & state)
 {
+  hw_control_mode_command_ = get_command<double>(control_mode_command_name_);
+  cycle_time_command_ = get_command<double>(cycle_time_command_name_);
+
   return KukaRSIHardwareInterfaceBase::extended_activation(state);
 }
 
@@ -144,6 +153,10 @@ return_type KukaEkiRsiHardwareInterface::read(
   const rclcpp::Time & time, const rclcpp::Duration & duration)
 {
   status_manager_.UpdateStateInterfaces();
+  for (const auto & [name, value] : status_manager_.GetStateValues())
+  {
+    set_state(name, value);
+  }
 
   return KukaRSIHardwareInterfaceBase::read(time, duration);
 }

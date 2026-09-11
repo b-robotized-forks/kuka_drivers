@@ -79,6 +79,31 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
   hw_gpio_states_.resize(gpio.state_interfaces.size(), 0.0);
   hw_gpio_commands_.resize(gpio.command_interfaces.size(), 0.0);
 
+  joint_position_state_names_.resize(info_.joints.size());
+  joint_position_command_names_.resize(info_.joints.size());
+  for (size_t i = 0; i < info_.joints.size(); i++)
+  {
+    joint_position_state_names_[i] =
+      info_.joints[i].name + "/" + hardware_interface::HW_IF_POSITION;
+    joint_position_command_names_[i] =
+      info_.joints[i].name + "/" + hardware_interface::HW_IF_POSITION;
+  }
+
+  gpio_state_names_.resize(gpio.state_interfaces.size());
+  for (size_t i = 0; i < gpio.state_interfaces.size(); i++)
+  {
+    gpio_state_names_[i] =
+      std::string(hardware_interface::IO_PREFIX) + "/" + gpio.state_interfaces[i].name;
+  }
+  gpio_command_names_.resize(gpio.command_interfaces.size());
+  for (size_t i = 0; i < gpio.command_interfaces.size(); i++)
+  {
+    gpio_command_names_[i] =
+      std::string(hardware_interface::IO_PREFIX) + "/" + gpio.command_interfaces[i].name;
+  }
+  server_state_name_ =
+    std::string(hardware_interface::STATE_PREFIX) + "/" + hardware_interface::SERVER_STATE;
+
   is_active_ = false;
   msg_received_ = false;
 
@@ -90,46 +115,14 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
   return CallbackReturn::SUCCESS;
 }
 
-std::vector<hardware_interface::StateInterface>
-KukaRSIHardwareInterfaceBase::export_state_interfaces()
+std::vector<hardware_interface::InterfaceDescription>
+KukaRSIHardwareInterfaceBase::export_unlisted_state_interface_descriptions()
 {
-  std::vector<hardware_interface::StateInterface> state_interfaces;
-  for (size_t i = 0; i < info_.joints.size(); i++)
-  {
-    state_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_POSITION, &hw_states_[i]);
-  }
-
-  for (size_t i = 0; i < info_.gpios[0].state_interfaces.size(); i++)
-  {
-    state_interfaces.emplace_back(
-      hardware_interface::IO_PREFIX, info_.gpios[0].state_interfaces[i].name, &hw_gpio_states_[i]);
-  }
-
-  state_interfaces.emplace_back(
-    hardware_interface::STATE_PREFIX, hardware_interface::SERVER_STATE, &server_state_);
-
-  return state_interfaces;
-}
-
-std::vector<hardware_interface::CommandInterface>
-KukaRSIHardwareInterfaceBase::export_command_interfaces()
-{
-  std::vector<hardware_interface::CommandInterface> command_interfaces;
-  for (size_t i = 0; i < info_.joints.size(); i++)
-  {
-    command_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_POSITION, &hw_commands_[i]);
-  }
-
-  for (size_t i = 0; i < info_.gpios[0].command_interfaces.size(); i++)
-  {
-    command_interfaces.emplace_back(
-      hardware_interface::IO_PREFIX, info_.gpios[0].command_interfaces[i].name,
-      &hw_gpio_commands_[i]);
-  }
-
-  return command_interfaces;
+  hardware_interface::InterfaceInfo server_state_info{};
+  server_state_info.name = hardware_interface::SERVER_STATE;
+  server_state_info.initial_value = "0";
+  return {
+    hardware_interface::InterfaceDescription(hardware_interface::STATE_PREFIX, server_state_info)};
 }
 
 CallbackReturn KukaRSIHardwareInterfaceBase::on_cleanup(const rclcpp_lifecycle::State &)
@@ -149,11 +142,31 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
   }
 
   Read(READ_TIMEOUT_MS);
+
+  for (size_t i = 0; i < joint_position_state_names_.size(); i++)
+  {
+    set_state(joint_position_state_names_[i], hw_states_[i]);
+  }
+  for (size_t i = 0; i < gpio_state_names_.size(); i++)
+  {
+    set_state(gpio_state_names_[i], hw_gpio_states_[i]);
+  }
+  set_state(server_state_name_, server_state_);
+
   return return_type::OK;
 }
 
 return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclcpp::Duration &)
 {
+  for (size_t i = 0; i < joint_position_command_names_.size(); i++)
+  {
+    hw_commands_[i] = get_command<double>(joint_position_command_names_[i]);
+  }
+  for (size_t i = 0; i < gpio_command_names_.size(); i++)
+  {
+    hw_gpio_commands_[i] = get_command<double>(gpio_command_names_[i]);
+  }
+
   // If control is not started or a request is missed, do not send back anything
   if (!msg_received_)
   {

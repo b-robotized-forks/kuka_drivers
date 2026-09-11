@@ -26,6 +26,9 @@
 
 #include "rclcpp/rclcpp.hpp"
 
+#include "hardware_interface/hardware_info.hpp"
+#include "kuka_drivers_core/hardware_interface_types.hpp"
+
 #include "kuka/external-control-sdk/kss/status_update.h"
 
 namespace kuka_rsi_driver
@@ -48,23 +51,45 @@ public:
     return *this;
   }
 
-  void RegisterStateInterfaces(std::vector<hardware_interface::StateInterface> & state_interfaces)
+  // Names (without the state/ prefix) and current values of the interfaces this class backs.
+  // Kept as one list so ExportUnlistedStateInterfaceDescriptions() (declaring the interfaces)
+  // and GetStateValues() (reading them back each cycle) can't drift apart.
+  std::vector<std::pair<std::string, double>> GetNamedValues() const
   {
-    const std::vector<std::pair<std::string, double *>> interface_data = {
-      {hardware_interface::CONTROL_MODE, &control_mode_},
-      {hardware_interface::CYCLE_TIME, &cycle_time_},
-      {hardware_interface::DRIVES_POWERED, &drives_powered_},
-      {hardware_interface::EMERGENCY_STOP, &emergency_stop_},
-      {hardware_interface::GUARD_STOP, &guard_stop_},
-      {hardware_interface::IN_MOTION, &in_motion_},
-      {hardware_interface::MOTION_POSSIBLE, &motion_possible_},
-      {hardware_interface::OPERATION_MODE, &operation_mode_},
-      {hardware_interface::ROBOT_STOPPED, &robot_stopped_}};
+    return {
+      {hardware_interface::CONTROL_MODE, control_mode_},
+      {hardware_interface::CYCLE_TIME, cycle_time_},
+      {hardware_interface::DRIVES_POWERED, drives_powered_},
+      {hardware_interface::EMERGENCY_STOP, emergency_stop_},
+      {hardware_interface::GUARD_STOP, guard_stop_},
+      {hardware_interface::IN_MOTION, in_motion_},
+      {hardware_interface::MOTION_POSSIBLE, motion_possible_},
+      {hardware_interface::OPERATION_MODE, operation_mode_},
+      {hardware_interface::ROBOT_STOPPED, robot_stopped_}};
+  }
 
-    for (const auto & [name, value_ptr] : interface_data)
+  std::vector<hardware_interface::InterfaceDescription> ExportUnlistedStateInterfaceDescriptions()
+    const
+  {
+    std::vector<hardware_interface::InterfaceDescription> descriptions;
+    for (const auto & [name, value] : GetNamedValues())
     {
-      state_interfaces.emplace_back(hardware_interface::STATE_PREFIX, name, value_ptr);
+      hardware_interface::InterfaceInfo info{};
+      info.name = name;
+      info.initial_value = "0";
+      descriptions.emplace_back(hardware_interface::STATE_PREFIX, info);
     }
+    return descriptions;
+  }
+
+  std::vector<std::pair<std::string, double>> GetStateValues() const
+  {
+    std::vector<std::pair<std::string, double>> values;
+    for (auto & [name, value] : GetNamedValues())
+    {
+      values.emplace_back(std::string(hardware_interface::STATE_PREFIX) + "/" + name, value);
+    }
+    return values;
   }
 
   bool IsOperationModeExt()
@@ -94,9 +119,16 @@ private:
 class StatusManager
 {
 public:
-  void RegisterStateInterfaces(std::vector<hardware_interface::StateInterface> & state_interfaces)
+  std::vector<hardware_interface::InterfaceDescription> ExportUnlistedStateInterfaceDescriptions()
+    const
   {
-    status_interfaces_.RegisterStateInterfaces(state_interfaces);
+    return status_interfaces_.ExportUnlistedStateInterfaceDescriptions();
+  }
+
+  std::vector<std::pair<std::string, double>> GetStateValues()
+  {
+    std::lock_guard<std::mutex> lck{status_mtx_};
+    return status_interfaces_.GetStateValues();
   }
 
   void SetStatusInterfaces(const kuka::external::control::kss::StatusUpdate & update)
