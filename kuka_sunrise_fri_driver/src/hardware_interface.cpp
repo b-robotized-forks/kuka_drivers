@@ -14,6 +14,7 @@
 
 #include <memory>
 
+#include <hardware_interface/lexical_casts.hpp>
 #include <hardware_interface/types/hardware_interface_type_values.hpp>
 #include "kuka_drivers_core/hardware_interface_types.hpp"
 
@@ -62,12 +63,27 @@ CallbackReturn KukaFRIHardwareInterface::on_init(
   {
     gpio_outputs_.emplace_back(state_if.name, getType(state_if.data_type), robotState());
   }
+  for (const auto & output : gpio_outputs_)
+  {
+    gpio_output_names_.push_back(
+      std::string(hardware_interface::IO_PREFIX) + "/" + output.getName());
+  }
 
   for (const auto & command_if : info_.gpios[0].command_interfaces)
   {
-    gpio_inputs_.emplace_back(
-      command_if.name, getType(command_if.data_type), robotCommand(),
-      std::stod(command_if.initial_value));
+    const IOTypes io_type = getType(command_if.data_type);
+    // Boolean GPIO commands carry "true"/"false" in initial_value (required by
+    // hardware_interface::Handle's own bool parsing), not a stod-able number.
+    const double initial_value =
+      io_type == IOTypes::BOOLEAN
+        ? static_cast<double>(hardware_interface::parse_bool(command_if.initial_value))
+        : std::stod(command_if.initial_value);
+    gpio_inputs_.emplace_back(command_if.name, io_type, robotCommand(), initial_value);
+  }
+  for (const auto & input : gpio_inputs_)
+  {
+    gpio_input_names_.push_back(
+      std::string(hardware_interface::IO_PREFIX) + "/" + input.getName());
   }
 
   for (const hardware_interface::ComponentInfo & joint : info_.joints)
@@ -147,6 +163,61 @@ CallbackReturn KukaFRIHardwareInterface::on_init(
     }
   }
 
+  joint_position_state_names_.resize(info_.joints.size());
+  joint_effort_state_names_.resize(info_.joints.size());
+  joint_external_torque_state_names_.resize(info_.joints.size());
+  joint_commanded_position_state_names_.resize(info_.joints.size());
+  joint_position_command_names_.resize(info_.joints.size());
+  joint_stiffness_command_names_.resize(info_.joints.size());
+  joint_damping_command_names_.resize(info_.joints.size());
+  joint_effort_command_names_.resize(info_.joints.size());
+  for (size_t i = 0; i < info_.joints.size(); i++)
+  {
+    const std::string & name = info_.joints[i].name;
+    joint_position_state_names_[i] = name + "/" + hardware_interface::HW_IF_POSITION;
+    joint_effort_state_names_[i] = name + "/" + hardware_interface::HW_IF_EFFORT;
+    joint_external_torque_state_names_[i] =
+      name + "/" + hardware_interface::HW_IF_EXTERNAL_TORQUE;
+    joint_commanded_position_state_names_[i] =
+      name + "/" + hardware_interface::HW_IF_COMMANDED_POSITION;
+    joint_position_command_names_[i] = name + "/" + hardware_interface::HW_IF_POSITION;
+    joint_stiffness_command_names_[i] = name + "/" + hardware_interface::HW_IF_STIFFNESS;
+    joint_damping_command_names_[i] = name + "/" + hardware_interface::HW_IF_DAMPING;
+    joint_effort_command_names_[i] = name + "/" + hardware_interface::HW_IF_EFFORT;
+  }
+
+  fixed_state_interfaces_ = {
+    {std::string(hardware_interface::FRI_STATE_PREFIX) + "/" + hardware_interface::SESSION_STATE,
+     &robot_state_.session_state_},
+    {std::string(hardware_interface::FRI_STATE_PREFIX) + "/" +
+       hardware_interface::CONNECTION_QUALITY,
+     &robot_state_.connection_quality_},
+    {std::string(hardware_interface::FRI_STATE_PREFIX) + "/" + hardware_interface::SAFETY_STATE,
+     &robot_state_.safety_state_},
+    {std::string(hardware_interface::FRI_STATE_PREFIX) + "/" + hardware_interface::COMMAND_MODE,
+     &robot_state_.command_mode_},
+    {std::string(hardware_interface::FRI_STATE_PREFIX) + "/" + hardware_interface::CONTROL_MODE,
+     &robot_state_.control_mode_},
+    {std::string(hardware_interface::FRI_STATE_PREFIX) + "/" + hardware_interface::OPERATION_MODE,
+     &robot_state_.operation_mode_},
+    {std::string(hardware_interface::FRI_STATE_PREFIX) + "/" + hardware_interface::DRIVE_STATE,
+     &robot_state_.drive_state_},
+    {std::string(hardware_interface::FRI_STATE_PREFIX) + "/" + hardware_interface::OVERLAY_TYPE,
+     &robot_state_.overlay_type_},
+    {std::string(hardware_interface::FRI_STATE_PREFIX) + "/" +
+       hardware_interface::TRACKING_PERFORMANCE,
+     &robot_state_.tracking_performance_},
+  };
+  server_state_name_ =
+    std::string(hardware_interface::STATE_PREFIX) + "/" + hardware_interface::SERVER_STATE;
+
+  control_mode_command_name_ =
+    std::string(hardware_interface::CONFIG_PREFIX) + "/" + hardware_interface::CONTROL_MODE;
+  receive_multiplier_command_name_ =
+    std::string(hardware_interface::CONFIG_PREFIX) + "/" + hardware_interface::RECEIVE_MULTIPLIER;
+  send_period_command_name_ =
+    std::string(hardware_interface::CONFIG_PREFIX) + "/" + hardware_interface::SEND_PERIOD;
+
   RCLCPP_INFO(
     rclcpp::get_logger("KukaFRIHardwareInterface"),
     "Init successful with controller ip: %s and client ip: %s:%i", controller_ip_.c_str(),
@@ -197,6 +268,10 @@ CallbackReturn KukaFRIHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
   // FRI config cannot be set during hardware interface configuration, as the controller cannot
   // modify the cmd interface until the hardware reached the configured state
   // write() is no longer called in inactive state, so we can only set config during activation
+
+  control_mode_ = get_command<double>(control_mode_command_name_);
+  receive_multiplier_ = get_command<double>(receive_multiplier_command_name_);
+  send_period_ms_ = get_command<double>(send_period_command_name_);
 
   if (!fri_connection_->setFRIConfig(
         client_ip_, client_port_, static_cast<int>(send_period_ms_),
@@ -355,11 +430,28 @@ hardware_interface::return_type KukaFRIHardwareInterface::read(
     {
       output.getValue();
     }
+
+    for (size_t i = 0; i < info_.joints.size(); i++)
+    {
+      set_state(joint_position_state_names_[i], hw_position_states_[i]);
+      set_state(joint_effort_state_names_[i], hw_torque_states_[i]);
+      set_state(joint_external_torque_state_names_[i], hw_ext_torque_states_[i]);
+      set_state(joint_commanded_position_state_names_[i], hw_commanded_position_states_[i]);
+    }
+    for (size_t i = 0; i < gpio_output_names_.size(); i++)
+    {
+      set_state(gpio_output_names_[i], gpio_outputs_[i].getData());
+    }
+    for (const auto & [name, value_ptr] : fixed_state_interfaces_)
+    {
+      set_state(name, *value_ptr);
+    }
   }
 
   // Modify state interface only in read
   std::lock_guard<std::mutex> lk(event_mutex_);
   server_state_ = static_cast<double>(last_event_);
+  set_state(server_state_name_, server_state_);
   return hardware_interface::return_type::OK;
 }
 
@@ -372,6 +464,20 @@ hardware_interface::return_type KukaFRIHardwareInterface::write(
   if (!active_read_)
   {
     return hardware_interface::return_type::OK;
+  }
+
+  control_mode_ = get_command<double>(control_mode_command_name_);
+  receive_multiplier_ = get_command<double>(receive_multiplier_command_name_);
+  for (size_t i = 0; i < info_.joints.size(); i++)
+  {
+    hw_position_commands_[i] = get_command<double>(joint_position_command_names_[i]);
+    hw_stiffness_commands_[i] = get_command<double>(joint_stiffness_command_names_[i]);
+    hw_damping_commands_[i] = get_command<double>(joint_damping_command_names_[i]);
+    hw_torque_commands_[i] = get_command<double>(joint_effort_command_names_[i]);
+  }
+  for (size_t i = 0; i < gpio_input_names_.size(); i++)
+  {
+    gpio_inputs_[i].getData() = get_command<double>(gpio_input_names_[i]);
   }
 
   // Call the appropriate callback for the actual state (e.g. updateCommand)
@@ -424,98 +530,45 @@ void KukaFRIHardwareInterface::updateCommand(const rclcpp::Time &)
   }
 }
 
-std::vector<hardware_interface::StateInterface> KukaFRIHardwareInterface::export_state_interfaces()
+namespace
 {
-  std::vector<hardware_interface::StateInterface> state_interfaces;
+hardware_interface::InterfaceDescription MakeUnlistedInterface(
+  const std::string & prefix, const std::string & name)
+{
+  hardware_interface::InterfaceInfo info{};
+  info.name = name;
+  info.initial_value = "0";
+  return hardware_interface::InterfaceDescription(prefix, info);
+}
+}  // namespace
 
-  state_interfaces.emplace_back(
-    hardware_interface::FRI_STATE_PREFIX, hardware_interface::SESSION_STATE,
-    &robot_state_.session_state_);
-  state_interfaces.emplace_back(
-    hardware_interface::FRI_STATE_PREFIX, hardware_interface::CONNECTION_QUALITY,
-    &robot_state_.connection_quality_);
-  state_interfaces.emplace_back(
-    hardware_interface::FRI_STATE_PREFIX, hardware_interface::SAFETY_STATE,
-    &robot_state_.safety_state_);
-  state_interfaces.emplace_back(
-    hardware_interface::FRI_STATE_PREFIX, hardware_interface::COMMAND_MODE,
-    &robot_state_.command_mode_);
-  state_interfaces.emplace_back(
-    hardware_interface::FRI_STATE_PREFIX, hardware_interface::CONTROL_MODE,
-    &robot_state_.control_mode_);
-  state_interfaces.emplace_back(
-    hardware_interface::FRI_STATE_PREFIX, hardware_interface::OPERATION_MODE,
-    &robot_state_.operation_mode_);
-  state_interfaces.emplace_back(
-    hardware_interface::FRI_STATE_PREFIX, hardware_interface::DRIVE_STATE,
-    &robot_state_.drive_state_);
-  state_interfaces.emplace_back(
-    hardware_interface::FRI_STATE_PREFIX, hardware_interface::OVERLAY_TYPE,
-    &robot_state_.overlay_type_);
-  state_interfaces.emplace_back(
-    hardware_interface::FRI_STATE_PREFIX, hardware_interface::TRACKING_PERFORMANCE,
-    &robot_state_.tracking_performance_);
+std::vector<hardware_interface::InterfaceDescription>
+KukaFRIHardwareInterface::export_unlisted_state_interface_descriptions()
+{
+  std::vector<hardware_interface::InterfaceDescription> descriptions;
 
-  // Register I/O outputs (read access)
-  for (auto & output : gpio_outputs_)
+  for (const auto & [name, value_ptr] : fixed_state_interfaces_)
   {
-    state_interfaces.emplace_back(
-      hardware_interface::IO_PREFIX, output.getName(), &output.getData());
+    // fixed_state_interfaces_ stores the already-prefixed full name; split it back out, since
+    // InterfaceDescription wants prefix and name separately.
+    const auto slash_pos = name.find('/');
+    descriptions.push_back(
+      MakeUnlistedInterface(name.substr(0, slash_pos), name.substr(slash_pos + 1)));
   }
+  descriptions.push_back(
+    MakeUnlistedInterface(hardware_interface::STATE_PREFIX, hardware_interface::SERVER_STATE));
 
-  for (size_t i = 0; i < info_.joints.size(); i++)
-  {
-    state_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_POSITION, &hw_position_states_[i]);
-
-    state_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_EFFORT, &hw_torque_states_[i]);
-
-    state_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_EXTERNAL_TORQUE, &hw_ext_torque_states_[i]);
-
-    state_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_COMMANDED_POSITION,
-      &hw_commanded_position_states_[i]);
-  }
-
-  state_interfaces.emplace_back(
-    hardware_interface::STATE_PREFIX, hardware_interface::SERVER_STATE, &server_state_);
-  return state_interfaces;
+  return descriptions;
 }
 
-std::vector<hardware_interface::CommandInterface>
-KukaFRIHardwareInterface::export_command_interfaces()
+std::vector<hardware_interface::InterfaceDescription>
+KukaFRIHardwareInterface::export_unlisted_command_interface_descriptions()
 {
-  std::vector<hardware_interface::CommandInterface> command_interfaces;
-
-  command_interfaces.emplace_back(
-    hardware_interface::CONFIG_PREFIX, hardware_interface::CONTROL_MODE, &control_mode_);
-  command_interfaces.emplace_back(
-    hardware_interface::CONFIG_PREFIX, hardware_interface::RECEIVE_MULTIPLIER,
-    &receive_multiplier_);
-  command_interfaces.emplace_back(
-    hardware_interface::CONFIG_PREFIX, hardware_interface::SEND_PERIOD, &send_period_ms_);
-
-  // Register I/O inputs (write access)
-  for (auto & input : gpio_inputs_)
-  {
-    command_interfaces.emplace_back(
-      hardware_interface::IO_PREFIX, input.getName(), &input.getData());
-  }
-
-  for (size_t i = 0; i < info_.joints.size(); i++)
-  {
-    command_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_POSITION, &hw_position_commands_[i]);
-    command_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_STIFFNESS, &hw_stiffness_commands_[i]);
-    command_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_DAMPING, &hw_damping_commands_[i]);
-    command_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_EFFORT, &hw_torque_commands_[i]);
-  }
-  return command_interfaces;
+  return {
+    MakeUnlistedInterface(hardware_interface::CONFIG_PREFIX, hardware_interface::CONTROL_MODE),
+    MakeUnlistedInterface(
+      hardware_interface::CONFIG_PREFIX, hardware_interface::RECEIVE_MULTIPLIER),
+    MakeUnlistedInterface(hardware_interface::CONFIG_PREFIX, hardware_interface::SEND_PERIOD)};
 }
 
 // Friction compensation is activated only if the commanded and measured joint positions differ
