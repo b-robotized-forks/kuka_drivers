@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <vector>
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
@@ -34,9 +35,18 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
   hw_states_.resize(info_.joints.size(), 0.0);
   hw_commands_.resize(info_.joints.size(), 0.0);
 
+  const std::string current_interface_name(kCurrentInterfaceName);
+  has_current_interface_ =
+    !info_.joints.empty() &&
+    std::any_of(
+      info_.joints[0].state_interfaces.cbegin(), info_.joints[0].state_interfaces.cend(),
+      [&current_interface_name](const auto & state_interface)
+      { return state_interface.name == current_interface_name; });
+  hw_current_states_.resize(has_current_interface_ ? info_.joints.size() : 0, 0.0);
+
   for (const auto & joint : info_.joints)
   {
-    bool interfaces_ok = CheckJointInterfaces(joint);
+    bool interfaces_ok = CheckJointInterfaces(joint, has_current_interface_);
     if (!interfaces_ok)
     {
       return CallbackReturn::ERROR;
@@ -98,6 +108,15 @@ KukaRSIHardwareInterfaceBase::export_state_interfaces()
   {
     state_interfaces.emplace_back(
       info_.joints[i].name, hardware_interface::HW_IF_POSITION, &hw_states_[i]);
+  }
+
+  if (has_current_interface_)
+  {
+    for (size_t i = 0; i < info_.joints.size(); i++)
+    {
+      state_interfaces.emplace_back(
+        info_.joints[i].name, std::string(kCurrentInterfaceName), &hw_current_states_[i]);
+    }
   }
 
   for (size_t i = 0; i < info_.gpios[0].state_interfaces.size(); i++)
@@ -203,6 +222,8 @@ bool KukaRSIHardwareInterfaceBase::SetupRobot(
     config.gpio_state_configs.emplace_back(ParseGPIOConfig(gpio_state));
   }
 
+  ConfigureMotionStateXml(config);
+
   CreateRobotInstance(config);
 
   if (event_handler != nullptr)
@@ -271,6 +292,11 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
     const auto & gpio_values = req_message.GetGPIOValues();
 
     std::copy(positions.cbegin(), positions.cend(), hw_states_.begin());
+    if (has_current_interface_)
+    {
+      const auto & currents = req_message.GetMeasuredCurrents();
+      std::copy(currents.cbegin(), currents.cend(), hw_current_states_.begin());
+    }
     // Save IO states
     for (size_t i = 0; i < hw_gpio_states_.size(); i++)
     {
@@ -315,7 +341,7 @@ void KukaRSIHardwareInterfaceBase::set_server_event(kuka_drivers_core::HardwareE
 }
 
 bool KukaRSIHardwareInterfaceBase::CheckJointInterfaces(
-  const hardware_interface::ComponentInfo & joint) const
+  const hardware_interface::ComponentInfo & joint, bool expect_current) const
 {
   if (joint.command_interfaces.size() != 1)
   {
@@ -329,16 +355,38 @@ bool KukaRSIHardwareInterfaceBase::CheckJointInterfaces(
     return false;
   }
 
-  if (joint.state_interfaces.size() != 1)
+  const std::size_t expected_state_interfaces = expect_current ? 2 : 1;
+  if (joint.state_interfaces.size() != expected_state_interfaces)
   {
-    RCLCPP_FATAL(logger_, "Expecting exactly 1 state interface");
+    RCLCPP_FATAL(
+      logger_, "Expecting exactly %zu state interface(s)", expected_state_interfaces);
     return false;
   }
 
-  if (joint.state_interfaces[0].name != hardware_interface::HW_IF_POSITION)
+  const bool has_position = std::any_of(
+    joint.state_interfaces.cbegin(), joint.state_interfaces.cend(),
+    [](const auto & state_interface)
+    { return state_interface.name == hardware_interface::HW_IF_POSITION; });
+  if (!has_position)
   {
-    RCLCPP_FATAL(logger_, "Expecting only POSITION state interface");
+    RCLCPP_FATAL(logger_, "Expecting a POSITION state interface");
     return false;
+  }
+
+  if (expect_current)
+  {
+    const std::string current_interface_name(kCurrentInterfaceName);
+    const bool has_current = std::any_of(
+      joint.state_interfaces.cbegin(), joint.state_interfaces.cend(),
+      [&current_interface_name](const auto & state_interface)
+      { return state_interface.name == current_interface_name; });
+    if (!has_current)
+    {
+      RCLCPP_FATAL(
+        logger_,
+        "Every joint must declare a CURRENT state interface if any joint declares one");
+      return false;
+    }
   }
 
   return true;
@@ -648,6 +696,119 @@ void KukaRSIHardwareInterfaceBase::ConfigureJoints(
       logger_, "Configured joint \"" << joint.name << "\": type=" << JC::TypeToString(type)
                                      << ", external=" << (is_external ? "true" : "false"));
   }
+}
+
+void KukaRSIHardwareInterfaceBase::ConfigureMotionStateXml(
+  kuka::external::control::kss::Configuration & config) const
+{
+  // Leave the SDK's default motion-state XML layout (position + GPIO only) untouched unless the
+  // URDF opted into a "current" state interface for every joint (checked in on_init() via
+  // CheckJointInterfaces()) -- this requires the robot's RSI config to also transmit the
+  // internal MACur/MECur elements (motor current for A1-A6 / E1-E6), see the aip_cell_
+  // configuration docs for how to enable that on the KRC side.
+  if (!has_current_interface_)
+  {
+    return;
+  }
+
+  using MSF = kuka::external::control::kss::MotionStateJointFieldConfiguration;
+  using MSST = kuka::external::control::kss::MotionStateSignalType;
+  using MSXFT = kuka::external::control::kss::MotionStateXmlFieldType;
+
+  kuka::external::control::kss::MotionStateXmlConfiguration xml_config;
+
+  xml_config.gpio_xml_attributes.reserve(config.gpio_state_configs.size());
+  for (const auto & gpio : config.gpio_state_configs)
+  {
+    xml_config.gpio_xml_attributes.push_back(gpio.name);
+  }
+
+  // Unlike RIst/AIPos/EIPos/Delay, MACur/MECur are not part of the RSI wire format's fixed
+  // internal-element block -- they appear wherever they were declared in the robot-side SEND
+  // element list, which on this cell's config is AFTER the GPIO elements and right before Delay
+  // (<RIst><AIPos><EIPos><GPIO><MACur><Delay><IPOC>). We therefore build joint position fields
+  // and current fields as separate groups below and place them explicitly in field_order to
+  // match -- if the robot's RSI config is ever redeclared with MACur elsewhere, this ordering
+  // (and the explicit field_order built below) must be updated to match.
+  std::size_t internal_idx = 1;
+  std::size_t external_idx = 1;
+  std::vector<MSF> internal_position_fields;
+  std::vector<MSF> external_position_fields;
+  std::vector<MSF> internal_current_fields;
+  std::vector<MSF> external_current_fields;
+
+  for (const auto & joint : config.joint_configs)
+  {
+    MSF position_field;
+    position_field.joint_identifier = joint.name;
+    position_field.signal_type = MSST::POSITION;
+
+    MSF current_field;
+    current_field.joint_identifier = joint.name;
+    current_field.signal_type = MSST::CURRENT;
+
+    if (joint.is_external)
+    {
+      position_field.xml_element = "EIPos";
+      current_field.xml_element = "MECur";
+      external_position_fields.push_back(std::move(position_field));
+      external_current_fields.push_back(std::move(current_field));
+    }
+    else
+    {
+      position_field.xml_element = "AIPos";
+      current_field.xml_element = "MACur";
+      internal_position_fields.push_back(std::move(position_field));
+      internal_current_fields.push_back(std::move(current_field));
+    }
+  }
+
+  for (auto & field : internal_position_fields)
+  {
+    field.xml_attribute = "A" + std::to_string(internal_idx++);
+    xml_config.joint_fields.push_back(std::move(field));
+  }
+  for (auto & field : external_position_fields)
+  {
+    field.xml_attribute = "E" + std::to_string(external_idx++);
+    xml_config.joint_fields.push_back(std::move(field));
+  }
+  const std::size_t num_position_fields = xml_config.joint_fields.size();
+
+  internal_idx = 1;
+  external_idx = 1;
+  for (auto & field : internal_current_fields)
+  {
+    field.xml_attribute = "A" + std::to_string(internal_idx++);
+    xml_config.joint_fields.push_back(std::move(field));
+  }
+  for (auto & field : external_current_fields)
+  {
+    field.xml_attribute = "E" + std::to_string(external_idx++);
+    xml_config.joint_fields.push_back(std::move(field));
+  }
+
+  // Explicit parse order matching this cell's robot-side SEND declaration order:
+  // Cartesian, position joints, GPIO, current joints, Delay (IPOC is always appended last by
+  // the SDK). See the comment above for why current fields can't just be grouped with position
+  // fields the way the SDK's own default ordering would do.
+  xml_config.field_order.reserve(2 + xml_config.joint_fields.size() + xml_config.gpio_xml_attributes.size());
+  xml_config.field_order.push_back({MSXFT::CARTESIAN, 0});
+  for (std::size_t i = 0; i < num_position_fields; ++i)
+  {
+    xml_config.field_order.push_back({MSXFT::JOINT, i});
+  }
+  for (std::size_t i = 0; i < xml_config.gpio_xml_attributes.size(); ++i)
+  {
+    xml_config.field_order.push_back({MSXFT::GPIO, i});
+  }
+  for (std::size_t i = num_position_fields; i < xml_config.joint_fields.size(); ++i)
+  {
+    xml_config.field_order.push_back({MSXFT::JOINT, i});
+  }
+  xml_config.field_order.push_back({MSXFT::DELAY, 0});
+
+  config.motion_state_xml_config = std::move(xml_config);
 }
 
 }  // namespace kuka_rsi_driver

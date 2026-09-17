@@ -84,7 +84,7 @@ protected:
   KUKA_RSI_DRIVER_LOCAL void ResetDiagnostics();
 
   KUKA_RSI_DRIVER_LOCAL bool CheckJointInterfaces(
-    const hardware_interface::ComponentInfo & joint) const;
+    const hardware_interface::ComponentInfo & joint, bool expect_current) const;
 
   KUKA_RSI_DRIVER_LOCAL void CopyGPIOStatesToCommands();
 
@@ -111,9 +111,16 @@ protected:
   std::unique_ptr<kuka::external::control::kss::rsi::Robot> robot_ptr_;
 
   std::vector<double> hw_states_;
+  std::vector<double> hw_current_states_;
   std::vector<double> hw_gpio_states_;
   std::vector<double> hw_commands_;
   std::vector<double> hw_gpio_commands_;
+
+  // True when every joint declares a "current" state interface in the URDF (opt-in; motor
+  // current reporting requires the robot's RSI config to transmit MACur/MECur, see
+  // ConfigureMotionStateXml()).
+  bool has_current_interface_ = false;
+  static constexpr std::string_view kCurrentInterfaceName = "current";
 
   double server_state_;
   kuka_drivers_core::HardwareEvent last_event_ =
@@ -151,6 +158,8 @@ protected:
 
 private:
   KUKA_RSI_DRIVER_LOCAL void ConfigureJoints(
+    kuka::external::control::kss::Configuration & config) const;
+  KUKA_RSI_DRIVER_LOCAL void ConfigureMotionStateXml(
     kuka::external::control::kss::Configuration & config) const;
 
   static constexpr std::string_view kTypeParamValue = "type";
