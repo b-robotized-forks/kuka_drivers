@@ -53,6 +53,63 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     }
   }
 
+  // Optional: a "cartesian_setpoint" sensor component with 6 state interfaces (x, y, z, a, b, c),
+  // see ConfigureMotionStateXml() -- requires the robot's RSI config to transmit RSol.
+  const std::string cartesian_setpoint_sensor_name(kCartesianSetpointSensorName);
+  const auto sensor_it = std::find_if(
+    info_.sensors.cbegin(), info_.sensors.cend(), [&cartesian_setpoint_sensor_name](
+                                                      const auto & sensor)
+    { return sensor.name == cartesian_setpoint_sensor_name; });
+  has_cartesian_setpoint_sensor_ = sensor_it != info_.sensors.cend();
+  if (has_cartesian_setpoint_sensor_)
+  {
+    for (const auto & interface_name : kCartesianSetpointInterfaceNames)
+    {
+      const std::string expected_name(interface_name);
+      const bool found = std::any_of(
+        sensor_it->state_interfaces.cbegin(), sensor_it->state_interfaces.cend(),
+        [&expected_name](const auto & state_interface)
+        { return state_interface.name == expected_name; });
+      if (!found)
+      {
+        RCLCPP_FATAL(
+          logger_, "Sensor \"cartesian_setpoint\" is missing state interface \"%s\"",
+          expected_name.c_str());
+        return CallbackReturn::ERROR;
+      }
+    }
+  }
+  hw_cartesian_setpoint_states_.resize(has_cartesian_setpoint_sensor_ ? 6 : 0, 0.0);
+
+  // Optional: a "cartesian_pose" sensor component with 6 state interfaces (x, y, z, a, b, c) --
+  // the actual Cartesian pose (RIst), which is always parsed regardless of configuration, so
+  // (unlike cartesian_setpoint) this needs no robot-side RSI config change.
+  const std::string cartesian_pose_sensor_name(kCartesianPoseSensorName);
+  const auto pose_sensor_it = std::find_if(
+    info_.sensors.cbegin(), info_.sensors.cend(),
+    [&cartesian_pose_sensor_name](const auto & sensor)
+    { return sensor.name == cartesian_pose_sensor_name; });
+  has_cartesian_pose_sensor_ = pose_sensor_it != info_.sensors.cend();
+  if (has_cartesian_pose_sensor_)
+  {
+    for (const auto & interface_name : kCartesianSetpointInterfaceNames)
+    {
+      const std::string expected_name(interface_name);
+      const bool found = std::any_of(
+        pose_sensor_it->state_interfaces.cbegin(), pose_sensor_it->state_interfaces.cend(),
+        [&expected_name](const auto & state_interface)
+        { return state_interface.name == expected_name; });
+      if (!found)
+      {
+        RCLCPP_FATAL(
+          logger_, "Sensor \"cartesian_pose\" is missing state interface \"%s\"",
+          expected_name.c_str());
+        return CallbackReturn::ERROR;
+      }
+    }
+  }
+  hw_cartesian_pose_states_.resize(has_cartesian_pose_sensor_ ? 6 : 0, 0.0);
+
   // Check gpio components size
   if (info_.gpios.size() != 1)
   {
@@ -116,6 +173,26 @@ KukaRSIHardwareInterfaceBase::export_state_interfaces()
     {
       state_interfaces.emplace_back(
         info_.joints[i].name, std::string(kCurrentInterfaceName), &hw_current_states_[i]);
+    }
+  }
+
+  if (has_cartesian_setpoint_sensor_)
+  {
+    for (size_t i = 0; i < kCartesianSetpointInterfaceNames.size(); i++)
+    {
+      state_interfaces.emplace_back(
+        std::string(kCartesianSetpointSensorName), std::string(kCartesianSetpointInterfaceNames[i]),
+        &hw_cartesian_setpoint_states_[i]);
+    }
+  }
+
+  if (has_cartesian_pose_sensor_)
+  {
+    for (size_t i = 0; i < kCartesianSetpointInterfaceNames.size(); i++)
+    {
+      state_interfaces.emplace_back(
+        std::string(kCartesianPoseSensorName), std::string(kCartesianSetpointInterfaceNames[i]),
+        &hw_cartesian_pose_states_[i]);
     }
   }
 
@@ -296,6 +373,19 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
     {
       const auto & currents = req_message.GetMeasuredCurrents();
       std::copy(currents.cbegin(), currents.cend(), hw_current_states_.begin());
+    }
+    if (has_cartesian_setpoint_sensor_)
+    {
+      const auto & cartesian_setpoints = req_message.GetMeasuredCartesianSetpoints();
+      std::copy(
+        cartesian_setpoints.cbegin(), cartesian_setpoints.cend(),
+        hw_cartesian_setpoint_states_.begin());
+    }
+    if (has_cartesian_pose_sensor_)
+    {
+      const auto & cartesian_positions = req_message.GetMeasuredCartesianPositions();
+      std::copy(
+        cartesian_positions.cbegin(), cartesian_positions.cend(), hw_cartesian_pose_states_.begin());
     }
     // Save IO states
     for (size_t i = 0; i < hw_gpio_states_.size(); i++)
@@ -702,11 +792,11 @@ void KukaRSIHardwareInterfaceBase::ConfigureMotionStateXml(
   kuka::external::control::kss::Configuration & config) const
 {
   // Leave the SDK's default motion-state XML layout (position + GPIO only) untouched unless the
-  // URDF opted into a "current" state interface for every joint (checked in on_init() via
-  // CheckJointInterfaces()) -- this requires the robot's RSI config to also transmit the
-  // internal MACur/MECur elements (motor current for A1-A6 / E1-E6), see the aip_cell_
-  // configuration docs for how to enable that on the KRC side.
-  if (!has_current_interface_)
+  // URDF opted into a "current" state interface (checked in on_init() via CheckJointInterfaces())
+  // and/or a "cartesian_setpoint" sensor component -- these require the robot's RSI config to
+  // also transmit the internal MACur/MECur (motor current) and/or RSol (setpoint pose) elements,
+  // see the aip_cell_configuration docs for how to enable that on the KRC side.
+  if (!has_current_interface_ && !has_cartesian_setpoint_sensor_)
   {
     return;
   }
@@ -717,6 +807,13 @@ void KukaRSIHardwareInterfaceBase::ConfigureMotionStateXml(
 
   kuka::external::control::kss::MotionStateXmlConfiguration xml_config;
 
+  if (has_cartesian_setpoint_sensor_)
+  {
+    xml_config.cartesian_setpoint.enabled = true;
+    // xml_element defaults to "RSol", xml_attributes default to {X,Y,Z,A,B,C} -- matches this
+    // cell's robot-side SEND declaration.
+  }
+
   xml_config.gpio_xml_attributes.reserve(config.gpio_state_configs.size());
   for (const auto & gpio : config.gpio_state_configs)
   {
@@ -726,10 +823,10 @@ void KukaRSIHardwareInterfaceBase::ConfigureMotionStateXml(
   // Unlike RIst/AIPos/EIPos/Delay, MACur/MECur are not part of the RSI wire format's fixed
   // internal-element block -- they appear wherever they were declared in the robot-side SEND
   // element list, which on this cell's config is AFTER the GPIO elements and right before Delay
-  // (<RIst><AIPos><EIPos><GPIO><MACur><Delay><IPOC>). We therefore build joint position fields
-  // and current fields as separate groups below and place them explicitly in field_order to
-  // match -- if the robot's RSI config is ever redeclared with MACur elsewhere, this ordering
-  // (and the explicit field_order built below) must be updated to match.
+  // (<RIst><RSol><AIPos><EIPos><GPIO><MACur><Delay><IPOC>). We therefore build joint position
+  // fields and current fields as separate groups below and place them explicitly in field_order
+  // to match -- if the robot's RSI config is ever redeclared with MACur/RSol elsewhere, this
+  // ordering (and the explicit field_order built below) must be updated to match.
   std::size_t internal_idx = 1;
   std::size_t external_idx = 1;
   std::vector<MSF> internal_position_fields;
@@ -743,23 +840,32 @@ void KukaRSIHardwareInterfaceBase::ConfigureMotionStateXml(
     position_field.joint_identifier = joint.name;
     position_field.signal_type = MSST::POSITION;
 
-    MSF current_field;
-    current_field.joint_identifier = joint.name;
-    current_field.signal_type = MSST::CURRENT;
-
     if (joint.is_external)
     {
       position_field.xml_element = "EIPos";
-      current_field.xml_element = "MECur";
       external_position_fields.push_back(std::move(position_field));
-      external_current_fields.push_back(std::move(current_field));
     }
     else
     {
       position_field.xml_element = "AIPos";
-      current_field.xml_element = "MACur";
       internal_position_fields.push_back(std::move(position_field));
-      internal_current_fields.push_back(std::move(current_field));
+    }
+
+    if (has_current_interface_)
+    {
+      MSF current_field;
+      current_field.joint_identifier = joint.name;
+      current_field.signal_type = MSST::CURRENT;
+      if (joint.is_external)
+      {
+        current_field.xml_element = "MECur";
+        external_current_fields.push_back(std::move(current_field));
+      }
+      else
+      {
+        current_field.xml_element = "MACur";
+        internal_current_fields.push_back(std::move(current_field));
+      }
     }
   }
 
@@ -789,11 +895,15 @@ void KukaRSIHardwareInterfaceBase::ConfigureMotionStateXml(
   }
 
   // Explicit parse order matching this cell's robot-side SEND declaration order:
-  // Cartesian, position joints, GPIO, current joints, Delay (IPOC is always appended last by
-  // the SDK). See the comment above for why current fields can't just be grouped with position
-  // fields the way the SDK's own default ordering would do.
-  xml_config.field_order.reserve(2 + xml_config.joint_fields.size() + xml_config.gpio_xml_attributes.size());
+  // Cartesian, cartesian setpoint, position joints, GPIO, current joints, Delay (IPOC is always
+  // appended last by the SDK). See the comment above for why current/setpoint fields can't just
+  // be grouped with position fields the way the SDK's own default ordering would do.
+  xml_config.field_order.reserve(3 + xml_config.joint_fields.size() + xml_config.gpio_xml_attributes.size());
   xml_config.field_order.push_back({MSXFT::CARTESIAN, 0});
+  if (has_cartesian_setpoint_sensor_)
+  {
+    xml_config.field_order.push_back({MSXFT::CARTESIAN_SETPOINT, 0});
+  }
   for (std::size_t i = 0; i < num_position_fields; ++i)
   {
     xml_config.field_order.push_back({MSXFT::JOINT, i});

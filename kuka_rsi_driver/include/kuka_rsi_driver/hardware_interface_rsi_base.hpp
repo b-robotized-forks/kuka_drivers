@@ -15,6 +15,7 @@
 #ifndef KUKA_RSI_DRIVER__HARDWARE_INTERFACE_RSI_BASE_HPP_
 #define KUKA_RSI_DRIVER__HARDWARE_INTERFACE_RSI_BASE_HPP_
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -112,6 +113,8 @@ protected:
 
   std::vector<double> hw_states_;
   std::vector<double> hw_current_states_;
+  std::vector<double> hw_cartesian_setpoint_states_;
+  std::vector<double> hw_cartesian_pose_states_;
   std::vector<double> hw_gpio_states_;
   std::vector<double> hw_commands_;
   std::vector<double> hw_gpio_commands_;
@@ -121,6 +124,21 @@ protected:
   // ConfigureMotionStateXml()).
   bool has_current_interface_ = false;
   static constexpr std::string_view kCurrentInterfaceName = "current";
+
+  // True when the URDF declares a "cartesian_setpoint" sensor component (opt-in; requires the
+  // robot's RSI config to transmit RSol, see ConfigureMotionStateXml()). x, y, z are in metres,
+  // a, b, c are the KUKA ABC Euler angles in radians (intrinsic Z-Y'-X'').
+  bool has_cartesian_setpoint_sensor_ = false;
+  static constexpr std::string_view kCartesianSetpointSensorName = "cartesian_setpoint";
+  static constexpr std::array<std::string_view, 6> kCartesianSetpointInterfaceNames = {
+    "x", "y", "z", "a", "b", "c"};
+
+  // True when the URDF declares a "cartesian_pose" sensor component (opt-in). Unlike
+  // cartesian_setpoint, this needs no robot-side RSI config change: RIst (actual Cartesian pose)
+  // is already parsed unconditionally by the SDK. Same units as cartesian_setpoint (metres,
+  // radians).
+  bool has_cartesian_pose_sensor_ = false;
+  static constexpr std::string_view kCartesianPoseSensorName = "cartesian_pose";
 
   double server_state_;
   kuka_drivers_core::HardwareEvent last_event_ =
