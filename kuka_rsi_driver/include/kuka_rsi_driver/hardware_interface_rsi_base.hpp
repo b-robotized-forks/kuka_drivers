@@ -85,7 +85,7 @@ protected:
   KUKA_RSI_DRIVER_LOCAL void ResetDiagnostics();
 
   KUKA_RSI_DRIVER_LOCAL bool CheckJointInterfaces(
-    const hardware_interface::ComponentInfo & joint, bool expect_current) const;
+    const hardware_interface::ComponentInfo & joint, bool expect_current, bool expect_torque) const;
 
   KUKA_RSI_DRIVER_LOCAL void CopyGPIOStatesToCommands();
 
@@ -113,8 +113,10 @@ protected:
 
   std::vector<double> hw_states_;
   std::vector<double> hw_current_states_;
+  std::vector<double> hw_torque_states_;
   std::vector<double> hw_cartesian_setpoint_states_;
   std::vector<double> hw_cartesian_pose_states_;
+  std::vector<double> hw_robot_status_states_;
   std::vector<double> hw_gpio_states_;
   std::vector<double> hw_commands_;
   std::vector<double> hw_gpio_commands_;
@@ -124,6 +126,14 @@ protected:
   // ConfigureMotionStateXml()).
   bool has_current_interface_ = false;
   static constexpr std::string_view kCurrentInterfaceName = "current";
+
+  // True when every joint declares a "torque" state interface in the URDF (opt-in; requires the
+  // robot's RSI config to transmit the custom RSIVisual "GearTorque" object outputs
+  // (GearTorque.A1-A6), see ConfigureMotionStateXml()). Unlike current (MACur/MECur, an internal
+  // RSI keyword), GearTorque is a custom object, so this is sourced via the custom-field
+  // mechanism, not the JOINT/CURRENT field type.
+  bool has_torque_interface_ = false;
+  static constexpr std::string_view kTorqueInterfaceName = "torque";
 
   // True when the URDF declares a "cartesian_setpoint" sensor component (opt-in; requires the
   // robot's RSI config to transmit RSol, see ConfigureMotionStateXml()). x, y, z are in metres,
@@ -139,6 +149,18 @@ protected:
   // radians).
   bool has_cartesian_pose_sensor_ = false;
   static constexpr std::string_view kCartesianPoseSensorName = "cartesian_pose";
+
+  // True when the URDF declares a "robot_status" sensor component (opt-in; requires the robot's
+  // RSI config to transmit the custom RSIVisual "Status"/"OV_PRO" object outputs as ProgStatus.R
+  // (LONG) and OvPro.R (DOUBLE), see ConfigureMotionStateXml()). program_state is the raw KUKA
+  // $PRO_STATE code (RUNNING=3, STOPPED=4); speed_scaling_factor is $OV_PRO normalized to 0-1
+  // (and forced to 0 whenever the program isn't RUNNING), matching this attribute's meaning as a
+  // live override on a running program.
+  bool has_robot_status_sensor_ = false;
+  static constexpr std::string_view kRobotStatusSensorName = "robot_status";
+  static constexpr std::array<std::string_view, 2> kRobotStatusInterfaceNames = {
+    "program_state", "speed_scaling_factor"};
+  static constexpr double kProgramStatusRunning = 3.0;
 
   double server_state_;
   kuka_drivers_core::HardwareEvent last_event_ =

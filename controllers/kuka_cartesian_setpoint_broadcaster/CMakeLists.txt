@@ -10,18 +10,20 @@ find_package(controller_interface REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(tf2 REQUIRED)
+find_package(std_msgs REQUIRED)
 
 include_directories(include)
 
 add_library(${PROJECT_NAME} SHARED
   src/kuka_cartesian_setpoint_broadcaster.cpp
-  src/kuka_cartesian_pose_broadcaster.cpp)
+  src/kuka_cartesian_pose_broadcaster.cpp
+  src/kuka_robot_status_broadcaster.cpp)
 
 target_include_directories(${PROJECT_NAME} PRIVATE
   include
 )
 
-ament_target_dependencies(${PROJECT_NAME} controller_interface geometry_msgs tf2
+ament_target_dependencies(${PROJECT_NAME} controller_interface geometry_msgs tf2 std_msgs
 )
 
 # Causes the visibility macros to use dllexport rather than dllimport,
