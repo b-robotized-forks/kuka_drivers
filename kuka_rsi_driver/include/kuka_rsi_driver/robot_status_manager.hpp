@@ -88,8 +88,7 @@ public:
     std::vector<std::pair<std::string, double>> values;
     for (auto & [name, value] : GetNamedValues())
     {
-      values.emplace_back(
-        interface_prefix + hardware_interface::STATE_PREFIX + "/" + name, value);
+      values.emplace_back(interface_prefix + hardware_interface::STATE_PREFIX + "/" + name, value);
     }
     return values;
   }

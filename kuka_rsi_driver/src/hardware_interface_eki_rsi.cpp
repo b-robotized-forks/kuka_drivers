@@ -58,12 +58,14 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_init(
 std::vector<hardware_interface::InterfaceDescription>
 KukaEkiRsiHardwareInterface::export_unlisted_command_interface_descriptions()
 {
-  auto descriptions = KukaRSIHardwareInterfaceBase::export_unlisted_command_interface_descriptions();
+  auto descriptions =
+    KukaRSIHardwareInterfaceBase::export_unlisted_command_interface_descriptions();
 
   hardware_interface::InterfaceInfo control_mode_info{};
   control_mode_info.name = hardware_interface::CONTROL_MODE;
   control_mode_info.initial_value = "0";
-  descriptions.emplace_back(interface_prefix_ + hardware_interface::CONFIG_PREFIX, control_mode_info);
+  descriptions.emplace_back(
+    interface_prefix_ + hardware_interface::CONFIG_PREFIX, control_mode_info);
 
   hardware_interface::InterfaceInfo cycle_time_info{};
   cycle_time_info.name = hardware_interface::CYCLE_TIME;

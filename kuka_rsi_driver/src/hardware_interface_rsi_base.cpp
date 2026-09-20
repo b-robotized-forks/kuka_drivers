@@ -221,7 +221,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
   server_state_name_ =
     interface_prefix_ + hardware_interface::STATE_PREFIX + "/" + hardware_interface::SERVER_STATE;
   interpolation_count_name_ = interface_prefix_ + hardware_interface::CONFIG_PREFIX + "/" +
-                               hardware_interface::INTERPOLATION_COUNT;
+                              hardware_interface::INTERPOLATION_COUNT;
 
   return CallbackReturn::SUCCESS;
 }
@@ -298,8 +298,7 @@ return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclc
     interface_data_.gpio_commands[i] = get_command<double>(gpio_command_names_[i]);
   }
 
-  uint32_t current_count =
-    static_cast<uint32_t>(get_command<double>(interpolation_count_name_));
+  uint32_t current_count = static_cast<uint32_t>(get_command<double>(interpolation_count_name_));
   // Skip validation while count is 0: EventBroadcaster only increments after all HW interfaces
   // report CONTROL_STARTED
   if (current_count > 0 && diagnostics_state_.interpolation_count_initialized)

@@ -153,9 +153,9 @@ std::vector<std::string> expected_extended_state_names()
 {
   std::vector<std::string> names = expected_base_state_names();
   const std::vector<std::string> status_names = {
-    hardware_interface::CONTROL_MODE,   hardware_interface::CYCLE_TIME,
-    hardware_interface::DRIVES_POWERED, hardware_interface::EMERGENCY_STOP,
-    hardware_interface::GUARD_STOP,     hardware_interface::IN_MOTION,
+    hardware_interface::CONTROL_MODE,    hardware_interface::CYCLE_TIME,
+    hardware_interface::DRIVES_POWERED,  hardware_interface::EMERGENCY_STOP,
+    hardware_interface::GUARD_STOP,      hardware_interface::IN_MOTION,
     hardware_interface::MOTION_POSSIBLE, hardware_interface::OPERATION_MODE,
     hardware_interface::ROBOT_STOPPED};
   for (const auto & name : status_names)
