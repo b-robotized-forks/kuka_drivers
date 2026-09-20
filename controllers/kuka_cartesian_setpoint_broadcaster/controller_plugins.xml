@@ -1,0 +1,17 @@
+<library path="kuka_cartesian_setpoint_broadcaster">
+  <class name="kuka_controllers/CartesianSetpointBroadcaster" type="kuka_controllers::CartesianSetpointBroadcaster" base_class_type="controller_interface::ControllerInterface">
+    <description>
+      This broadcaster publishes the robot's RSI setpoint Cartesian pose (RSol) as a geometry_msgs/Pose
+    </description>
+  </class>
+  <class name="kuka_controllers/CartesianPoseBroadcaster" type="kuka_controllers::CartesianPoseBroadcaster" base_class_type="controller_interface::ControllerInterface">
+    <description>
+      This broadcaster publishes the robot's actual RSI Cartesian pose (RIst) as a geometry_msgs/Pose
+    </description>
+  </class>
+  <class name="kuka_controllers/RobotStatusBroadcaster" type="kuka_controllers::RobotStatusBroadcaster" base_class_type="controller_interface::ControllerInterface">
+    <description>
+      This broadcaster publishes the KRC's program state and program override/speed scaling (ProgStatus/OvPro)
+    </description>
+  </class>
+</library>
