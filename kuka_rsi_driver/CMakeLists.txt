@@ -18,10 +18,12 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(controller_manager_msgs REQUIRED)
 find_package(hardware_interface REQUIRED)
+find_package(kuka_driver_interfaces REQUIRED)
 find_package(kuka-external-control-sdk CONFIG REQUIRED)
 find_package(kuka_drivers_core REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 include_directories(include)
 
@@ -29,6 +31,7 @@ include_directories(include)
 add_library(
   ${PROJECT_NAME} SHARED
   src/hardware_interface_rsi_base.cpp
+  src/rsi_xml_configuration_parser.cpp
   src/hardware_interface_eki_rsi.cpp
   src/hardware_interface_rsi_only.cpp
   src/hardware_interface_mxa_rsi.cpp
@@ -41,11 +44,16 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE "KUKA_RSI_DRIVER_BUILDING_LIB
 target_compile_definitions(${PROJECT_NAME} PUBLIC "PLUGINLIB__DISABLE_BOOST_FUNCTIONS")
 
 ament_target_dependencies(${PROJECT_NAME} hardware_interface kuka_drivers_core kuka-external-control-sdk)
-target_link_libraries(${PROJECT_NAME} Kuka::kuka-external-control-sdk)
+target_link_libraries(${PROJECT_NAME} Kuka::kuka-external-control-sdk yaml-cpp)
 
 # Shared library for robot_manager_base
 add_library(robot_manager_base STATIC src/robot_manager_base.cpp)
-ament_target_dependencies(robot_manager_base std_msgs kuka_drivers_core controller_manager_msgs)
+ament_target_dependencies(
+  robot_manager_base
+  std_msgs
+  kuka_driver_interfaces
+  kuka_drivers_core
+  controller_manager_msgs)
 target_link_libraries(robot_manager_base kuka_drivers_core::communication_helpers)
 
 add_executable(robot_manager_node_extended src/robot_manager_node_extended.cpp)
@@ -69,8 +77,9 @@ if(BUILD_TESTING)
   add_launch_test(test/test_driver_startup_rsi_only.py)
   add_launch_test(test/test_driver_startup_eki_rsi.py)
   add_launch_test(test/test_driver_startup_mxa_rsi.py)
+  add_launch_test(test/test_driver_startup_with_external_axis.py)
   add_launch_test(test/test_driver_activation.py)
-  add_launch_test(test/test_multi_robot_startup.py)
+  add_launch_test(test/test_driver_activation_dual_arm.py)
 endif()
 
 ## EXPORTS
@@ -89,5 +98,10 @@ ament_export_dependencies(
 
 install(DIRECTORY config launch test
   DESTINATION share/${PROJECT_NAME})
+
+install(PROGRAMS
+  scripts/generate_krc_rsi_config.py
+  scripts/rsi_monitor_node.py
+  DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

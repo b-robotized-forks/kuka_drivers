@@ -14,13 +14,17 @@
 
 #include <grpcpp/create_channel.h>
 #include <chrono>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "kuka_drivers_core/control_mode.hpp"
 #include "kuka_drivers_core/hardware_interface_types.hpp"
+#include "kuka_drivers_core/hardware_interface_utils.hpp"
+#include "kuka_drivers_core/joint_interface_validator.hpp"
 
 #include "kuka_iiqka_eac_driver/event_observer.hpp"
 #include "kuka_iiqka_eac_driver/hardware_interface.hpp"
@@ -47,73 +51,8 @@ CallbackReturn KukaEACHardwareInterface::on_init(
 
   for (const hardware_interface::ComponentInfo & joint : info_.joints)
   {
-    if (joint.command_interfaces.size() != 4)
+    if (!CheckJointInterfaces(joint))
     {
-      RCLCPP_FATAL(
-        rclcpp::get_logger("KukaEACHardwareInterface"), "expecting exactly 4 command interface");
-      return CallbackReturn::ERROR;
-    }
-
-    if (joint.command_interfaces[0].name != hardware_interface::HW_IF_POSITION)
-    {
-      RCLCPP_FATAL(
-        rclcpp::get_logger("KukaEACHardwareInterface"),
-        "expecting 'POSITION' command interface as first");
-      return CallbackReturn::ERROR;
-    }
-
-    if (joint.command_interfaces[1].name != hardware_interface::HW_IF_STIFFNESS)
-    {
-      RCLCPP_FATAL(
-        rclcpp::get_logger("KukaEACHardwareInterface"),
-        "expecting 'STIFFNESS' command interface as second");
-      return CallbackReturn::ERROR;
-    }
-
-    if (joint.command_interfaces[2].name != hardware_interface::HW_IF_DAMPING)
-    {
-      RCLCPP_FATAL(
-        rclcpp::get_logger("KukaEACHardwareInterface"),
-        "expecting 'DAMPING' command interface as third");
-      return CallbackReturn::ERROR;
-    }
-
-    if (joint.command_interfaces[3].name != hardware_interface::HW_IF_EFFORT)
-    {
-      RCLCPP_FATAL(
-        rclcpp::get_logger("KukaEACHardwareInterface"),
-        "expecting 'EFFORT' command interface as fourth");
-      return CallbackReturn::ERROR;
-    }
-
-    if (joint.state_interfaces.size() != 3)
-    {
-      RCLCPP_FATAL(
-        rclcpp::get_logger("KukaEACHardwareInterface"), "expecting exactly 3 state interface");
-      return CallbackReturn::ERROR;
-    }
-
-    if (joint.state_interfaces[0].name != hardware_interface::HW_IF_POSITION)
-    {
-      RCLCPP_FATAL(
-        rclcpp::get_logger("KukaEACHardwareInterface"),
-        "expecting 'POSITION' state interface as first");
-      return CallbackReturn::ERROR;
-    }
-
-    if (joint.state_interfaces[1].name != hardware_interface::HW_IF_EFFORT)
-    {
-      RCLCPP_FATAL(
-        rclcpp::get_logger("KukaEACHardwareInterface"),
-        "expecting 'EFFORT' state interface as second");
-      return CallbackReturn::ERROR;
-    }
-
-    if (joint.state_interfaces[2].name != hardware_interface::HW_IF_COMMANDED_POSITION)
-    {
-      RCLCPP_FATAL(
-        rclcpp::get_logger("KukaEACHardwareInterface"),
-        "expecting 'COMMANDED_POSITION' state interface as third");
       return CallbackReturn::ERROR;
     }
   }
@@ -123,6 +62,15 @@ CallbackReturn KukaEACHardwareInterface::on_init(
     "Init successful with controller ip: %s and client ip: %s",
     info_.hardware_parameters.at("controller_ip").c_str(),
     info_.hardware_parameters.at("client_ip").c_str());
+
+  auto info = get_hardware_info();
+  is_async_hardware_ = info.is_async;
+  interface_prefix_ = info.name + "/";
+  auto it = info.hardware_parameters.find("interface_prefix");
+  if (it != info.hardware_parameters.end())
+  {
+    interface_prefix_ = it->second;
+  }
 
   return CallbackReturn::SUCCESS;
 }
@@ -145,7 +93,8 @@ std::vector<hardware_interface::StateInterface> KukaEACHardwareInterface::export
   }
 
   state_interfaces.emplace_back(
-    hardware_interface::STATE_PREFIX, hardware_interface::SERVER_STATE, &server_state_);
+    interface_prefix_ + hardware_interface::STATE_PREFIX, hardware_interface::SERVER_STATE,
+    &server_state_);
 
   return state_interfaces;
 }
@@ -172,7 +121,12 @@ KukaEACHardwareInterface::export_command_interfaces()
   }
 
   command_interfaces.emplace_back(
-    hardware_interface::CONFIG_PREFIX, hardware_interface::CONTROL_MODE, &hw_control_mode_command_);
+    interface_prefix_ + hardware_interface::CONFIG_PREFIX, hardware_interface::CONTROL_MODE,
+    &hw_control_mode_command_);
+
+  command_interfaces.emplace_back(
+    interface_prefix_ + hardware_interface::CONFIG_PREFIX, hardware_interface::INTERPOLATION_COUNT,
+    &interpolation_count_command_);
 
   return command_interfaces;
 }
@@ -227,6 +181,7 @@ CallbackReturn KukaEACHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
     "External control session started successfully");
 
   cycle_count_ = 0;
+  interpolation_count_initialized_ = false;
   return CallbackReturn::SUCCESS;
 }
 
@@ -239,6 +194,7 @@ CallbackReturn KukaEACHardwareInterface::on_deactivate(const rclcpp_lifecycle::S
   // StopControlling sometimes calls a blocking read, which could conflict with the read() method,
   // but resource manager handles locking (resources_lock_), so is not necessary here
   robot_ptr_->StopControlling();
+  interpolation_count_initialized_ = false;
 
   return CallbackReturn::SUCCESS;
 }
@@ -285,6 +241,37 @@ return_type KukaEACHardwareInterface::write(const rclcpp::Time &, const rclcpp::
   if (!msg_received_)
   {
     return return_type::OK;
+  }
+
+  uint32_t current_count = static_cast<uint32_t>(interpolation_count_command_);
+  // Skip validation while count is 0: EventBroadcaster only increments after all HW interfaces
+  // report CONTROL_STARTED
+  if (current_count > 0 && interpolation_count_initialized_)
+  {
+    const uint32_t expected_count =
+      (last_interpolation_count_command_ == std::numeric_limits<uint32_t>::max())
+        ? 0
+        : last_interpolation_count_command_ + 1;
+
+    if (current_count != expected_count)
+    {
+      current_count = kuka_drivers_core::hardware_interface_utils::WaitForInterpolationCount(
+        expected_count, current_count, is_async_hardware_,
+        [this]() { return static_cast<uint32_t>(interpolation_count_command_); });
+
+      if (current_count != expected_count)
+      {
+        RCLCPP_WARN(
+          rclcpp::get_logger("KukaEACHardwareInterface"),
+          "interpolation_count mismatch before write: expected %u, got %u, hardware is %s",
+          expected_count, current_count, is_async_hardware_ ? "async" : "sync");
+      }
+    }
+  }
+  if (current_count > 0)
+  {
+    interpolation_count_initialized_ = true;
+    last_interpolation_count_command_ = current_count;
   }
 
   robot_ptr_->GetControlSignal().AddJointPositionValues(
@@ -368,6 +355,32 @@ void KukaEACHardwareInterface::set_server_event(kuka_drivers_core::HardwareEvent
 {
   std::lock_guard<std::mutex> lk(event_mutex_);
   last_event_ = event;
+}
+
+bool KukaEACHardwareInterface::CheckJointInterfaces(
+  const hardware_interface::ComponentInfo & joint) const
+{
+  return CheckJointCommandInterfaces(joint) && CheckJointStateInterfaces(joint);
+}
+
+bool KukaEACHardwareInterface::CheckJointCommandInterfaces(
+  const hardware_interface::ComponentInfo & joint) const
+{
+  const std::vector<std::string> expected_interfaces = {
+    hardware_interface::HW_IF_POSITION, hardware_interface::HW_IF_STIFFNESS,
+    hardware_interface::HW_IF_DAMPING, hardware_interface::HW_IF_EFFORT};
+  return kuka_drivers_core::urdf_validator::ValidateJointCommandInterfaces(
+    joint, expected_interfaces, rclcpp::get_logger("KukaEACHardwareInterface"));
+}
+
+bool KukaEACHardwareInterface::CheckJointStateInterfaces(
+  const hardware_interface::ComponentInfo & joint) const
+{
+  const std::vector<std::string> expected_interfaces = {
+    hardware_interface::HW_IF_POSITION, hardware_interface::HW_IF_EFFORT,
+    hardware_interface::HW_IF_COMMANDED_POSITION};
+  return kuka_drivers_core::urdf_validator::ValidateJointStateInterfaces(
+    joint, expected_interfaces, rclcpp::get_logger("KukaEACHardwareInterface"));
 }
 }  // namespace kuka_eac
 
