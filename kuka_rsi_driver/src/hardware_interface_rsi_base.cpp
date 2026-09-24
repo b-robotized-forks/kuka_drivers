@@ -41,12 +41,24 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.torque_states.resize(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
+  interface_data_.current_states.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.position_commands.resize(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.velocity_commands.resize(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.torque_commands.resize(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
+
+  // TODO(Sachin): Check this
+  // Opt-in per joint via the URDF (unlike position/velocity/effort, which are mandatory):
+  // derived from joint 0 and enforced consistently across all joints by
+  // CheckJointStateInterfaces() below.
+  optional_interface_flags_.has_current_state_interface =
+    !info_.joints.empty() &&
+    std::any_of(
+      info_.joints[0].state_interfaces.cbegin(), info_.joints[0].state_interfaces.cend(),
+      [](const hardware_interface::InterfaceInfo & interface)
+      { return interface.name == kCurrentInterfaceName; });
 
   for (const auto & joint : info_.joints)
   {
@@ -72,7 +84,9 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     control_signal_xml_config_ = temp_config.control_signal_xml_config;
   }
 
+  // TODO(Sachin): Check here
   // Derive optional interface flags from the XML config.
+  bool motor_current_configured_in_xml = false;
   if (motion_state_xml_config_.has_value())
   {
     using MST = kuka::external::control::kss::MotionStateSignalType;
@@ -85,6 +99,10 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
       joint_fields.cbegin(), joint_fields.cend(),
       [](const kuka::external::control::kss::MotionStateJointFieldConfiguration & field)
       { return field.signal_type == MST::TORQUE; });
+    motor_current_configured_in_xml = std::any_of(
+      joint_fields.cbegin(), joint_fields.cend(),
+      [](const kuka::external::control::kss::MotionStateJointFieldConfiguration & field)
+      { return field.signal_type == MST::CURRENT; });
   }
 
   if (control_signal_xml_config_.has_value())
@@ -114,6 +132,15 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
       "Effort state interfaces will be exported to ROS 2 Control, but motion_state.joints.torques "
       "is not configured in RSI XML. Effort state values will remain at their default (NaN) and "
       "will not be updated with actual measurements from the robot.");
+  }
+
+  if (optional_interface_flags_.has_current_state_interface && !motor_current_configured_in_xml)
+  {
+    RCLCPP_WARN(
+      logger_,
+      "Motor current state interfaces are declared in the URDF, but motion_state.joints.currents "
+      "is not configured in RSI XML. Motor current state values will remain at their default "
+      "(NaN) and will not be updated with actual measurements from the robot.");
   }
 
   if (!optional_interface_flags_.has_velocity_command_interface)
@@ -203,6 +230,16 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     joint_position_command_names_[i] = name + "/" + hardware_interface::HW_IF_POSITION;
     joint_velocity_command_names_[i] = name + "/" + hardware_interface::HW_IF_VELOCITY;
     joint_effort_command_names_[i] = name + "/" + hardware_interface::HW_IF_EFFORT;
+  }
+
+  if (optional_interface_flags_.has_current_state_interface)
+  {
+    joint_current_state_names_.resize(info_.joints.size());
+    for (size_t i = 0; i < info_.joints.size(); i++)
+    {
+      joint_current_state_names_[i] =
+        info_.joints[i].name + "/" + std::string(kCurrentInterfaceName);
+    }
   }
 
   gpio_state_names_.resize(gpio.state_interfaces.size());
@@ -455,6 +492,11 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
       const auto & torques = req_message.GetMeasuredTorques();
       std::copy(torques.cbegin(), torques.cend(), interface_data_.torque_states.begin());
     }
+    if (optional_interface_flags_.has_current_state_interface)
+    {
+      const auto & currents = req_message.GetMeasuredCurrents();
+      std::copy(currents.cbegin(), currents.cend(), interface_data_.current_states.begin());
+    }
     // Save IO states
     for (size_t i = 0; i < interface_data_.gpio_states.size(); i++)
     {
@@ -487,6 +529,13 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
       set_state(joint_position_state_names_[i], interface_data_.position_states[i]);
       set_state(joint_velocity_state_names_[i], interface_data_.velocity_states[i]);
       set_state(joint_effort_state_names_[i], interface_data_.torque_states[i]);
+    }
+    if (optional_interface_flags_.has_current_state_interface)
+    {
+      for (size_t i = 0; i < info_.joints.size(); i++)
+      {
+        set_state(joint_current_state_names_[i], interface_data_.current_states[i]);
+      }
     }
     for (size_t i = 0; i < gpio_state_names_.size(); i++)
     {
@@ -525,9 +574,15 @@ bool KukaRSIHardwareInterfaceBase::CheckJointCommandInterfaces(
 bool KukaRSIHardwareInterfaceBase::CheckJointStateInterfaces(
   const hardware_interface::ComponentInfo & joint) const
 {
-  const std::vector<std::string> expected_interfaces = {
+  std::vector<std::string> expected_interfaces = {
     hardware_interface::HW_IF_POSITION, hardware_interface::HW_IF_VELOCITY,
     hardware_interface::HW_IF_EFFORT};
+  // Opt-in: only required when joint 0 declared it (see on_init()), enforced consistently
+  // across all joints since ValidateJointStateInterfaces() requires an exact match.
+  if (optional_interface_flags_.has_current_state_interface)
+  {
+    expected_interfaces.push_back(std::string(kCurrentInterfaceName));
+  }
   return kuka_drivers_core::urdf_validator::ValidateJointStateInterfaces(
     joint, expected_interfaces, logger_);
 }
