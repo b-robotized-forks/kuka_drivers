@@ -120,6 +120,7 @@ protected:
     std::vector<double> velocity_states;
     std::vector<double> torque_states;
     std::vector<double> gpio_states;
+    std::vector<double> current_states;
     std::vector<double> position_commands;
     std::vector<double> velocity_commands;
     std::vector<double> torque_commands;
@@ -130,6 +131,7 @@ protected:
   {
     bool has_velocity_state_interface = false;
     bool has_torque_state_interface = false;
+    bool has_current_state_interface = false;
     bool has_velocity_command_interface = false;
     bool has_torque_command_interface = false;
   };
@@ -208,6 +210,7 @@ protected:
   std::vector<std::string> joint_position_command_names_;
   std::vector<std::string> joint_velocity_command_names_;
   std::vector<std::string> joint_effort_command_names_;
+  std::vector<std::string> joint_current_state_names_;
   std::vector<std::string> gpio_state_names_;
   std::vector<std::string> gpio_command_names_;
   std::string server_state_name_;
@@ -228,6 +231,8 @@ private:
   static constexpr std::string_view kTypeParamValue = "type";
   static constexpr std::string_view kIsExternalParamValue = "is_external";
   static constexpr std::string_view kRsiXmlConfigFileParam = "rsi_xml_config_file";
+  // Opt-in per joint via the URDF; unlike position/velocity/effort this is not mandatory.
+  static constexpr std::string_view kCurrentInterfaceName = "current";
 };
 }  // namespace kuka_rsi_driver
 

@@ -244,6 +244,13 @@ bool RsiXmlConfigurationParser::ParseJointMotionState(
     return false;
   }
 
+  if (!AppendOptionalJointFields(
+        joints_node["currents"], MotionStateSignalType::CURRENT, "joints.currents", joint_count,
+        motion_state_xml.joint_fields))
+  {
+    return false;
+  }
+
   return true;
 }
 
