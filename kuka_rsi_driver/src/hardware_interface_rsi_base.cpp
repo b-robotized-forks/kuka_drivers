@@ -15,6 +15,8 @@
 #include <limits>
 #include <vector>
 
+#include <Eigen/Geometry>
+
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "pluginlib/class_list_macros.hpp"
 
@@ -43,6 +45,10 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.current_states.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.robot_status_states.resize(2, std::numeric_limits<double>::quiet_NaN());
+  interface_data_.cartesian_pose_states.resize(
+    kCartesianPoseInterfaceNames.size(), std::numeric_limits<double>::quiet_NaN());
+  interface_data_.cartesian_setpoint_states.resize(
+    kCartesianPoseInterfaceNames.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.position_commands.resize(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.velocity_commands.resize(
@@ -109,6 +115,12 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
       { return field.signal_type == MST::CURRENT; });
     robot_status_configured_in_xml = motion_state_xml_config_.value().custom_fields.size() >= 2;
   }
+  // Cartesian actual pose (RIst) is enabled by default at the SDK level even without a custom
+  // XML config (MotionStateCartesianFieldConfiguration::enabled defaults to true), so no
+  // equivalent "configured in XML" check/warning is needed for cartesian_pose -- unlike setpoint
+  // (RSol), which defaults to disabled and must be explicitly enabled.
+  const bool cartesian_setpoint_configured_in_xml =
+    motion_state_xml_config_.has_value() && motion_state_xml_config_.value().cartesian_setpoint.enabled;
 
   if (control_signal_xml_config_.has_value())
   {
@@ -155,6 +167,18 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
       "Robot status state interfaces are declared in the URDF, but the RSI XML config does not "
       "configure the required custom fields (ProgStatus.R, OvPro.R). Program state and speed "
       "scaling values will remain at their default (NaN) and will not be updated with actual "
+      "measurements from the robot.");
+  }
+
+  if (
+    optional_interface_flags_.has_cartesian_setpoint_state_interface &&
+    !cartesian_setpoint_configured_in_xml)
+  {
+    RCLCPP_WARN(
+      logger_,
+      "Cartesian setpoint state interfaces are declared in the URDF, but "
+      "motion_state.cartesian_setpoint.enabled is not set to true in RSI XML. Cartesian setpoint "
+      "state values will remain at their default (NaN) and will not be updated with actual "
       "measurements from the robot.");
   }
 
@@ -205,6 +229,22 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
         return CallbackReturn::ERROR;
       }
     }
+  }
+
+  // Optional: "cartesian_pose" (RIst) / "cartesian_setpoint" (RSol) sensor components, each with
+  // the 7 pose_broadcaster-compatible state interfaces (kCartesianPoseInterfaceNames).
+  if (!DetectPoseSensor(
+        std::string(kCartesianPoseSensorName), optional_interface_flags_.has_cartesian_pose_state_interface,
+        cartesian_pose_state_names_))
+  {
+    return CallbackReturn::ERROR;
+  }
+  if (!DetectPoseSensor(
+        std::string(kCartesianSetpointSensorName),
+        optional_interface_flags_.has_cartesian_setpoint_state_interface,
+        cartesian_setpoint_state_names_))
+  {
+    return CallbackReturn::ERROR;
   }
 
   // Check gpio components size
@@ -560,6 +600,18 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
       interface_data_.robot_status_states[1] =
         (program_state == kProgramStatusRunning) ? (custom_values[1] / 100.0) : 0.0;
     }
+    if (optional_interface_flags_.has_cartesian_pose_state_interface)
+    {
+      const auto & cartesian_positions = req_message.GetMeasuredCartesianPositions();
+      const auto pose = CartesianPoseToPositionQuaternion(cartesian_positions);
+      std::copy(pose.cbegin(), pose.cend(), interface_data_.cartesian_pose_states.begin());
+    }
+    if (optional_interface_flags_.has_cartesian_setpoint_state_interface)
+    {
+      const auto & cartesian_setpoints = req_message.GetMeasuredCartesianSetpoints();
+      const auto pose = CartesianPoseToPositionQuaternion(cartesian_setpoints);
+      std::copy(pose.cbegin(), pose.cend(), interface_data_.cartesian_setpoint_states.begin());
+    }
     // Save IO states
     for (size_t i = 0; i < interface_data_.gpio_states.size(); i++)
     {
@@ -605,6 +657,20 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
       set_state(robot_status_state_names_[0], interface_data_.robot_status_states[0]);
       set_state(robot_status_state_names_[1], interface_data_.robot_status_states[1]);
     }
+    if (optional_interface_flags_.has_cartesian_pose_state_interface)
+    {
+      for (size_t i = 0; i < cartesian_pose_state_names_.size(); i++)
+      {
+        set_state(cartesian_pose_state_names_[i], interface_data_.cartesian_pose_states[i]);
+      }
+    }
+    if (optional_interface_flags_.has_cartesian_setpoint_state_interface)
+    {
+      for (size_t i = 0; i < cartesian_setpoint_state_names_.size(); i++)
+      {
+        set_state(cartesian_setpoint_state_names_[i], interface_data_.cartesian_setpoint_states[i]);
+      }
+    }
     for (size_t i = 0; i < gpio_state_names_.size(); i++)
     {
       set_state(gpio_state_names_[i], interface_data_.gpio_states[i]);
@@ -621,6 +687,56 @@ void KukaRSIHardwareInterfaceBase::set_server_event(kuka_drivers_core::HardwareE
 {
   std::lock_guard<std::mutex> lk(event_state_.event_mutex);
   event_state_.last_event = event;
+}
+
+std::array<double, 7> KukaRSIHardwareInterfaceBase::CartesianPoseToPositionQuaternion(
+  const std::vector<double> & xyzabc)
+{
+  // KUKA's A/B/C are intrinsic Z-Y'-X'' Euler angles: rotate about Z by A, then about the new Y'
+  // by B, then about the new X'' by C. Composing AngleAxis rotations in this order (applied
+  // right-to-left to a vector) reproduces exactly that intrinsic Z-Y'-X'' rotation.
+  const Eigen::Quaterniond q = Eigen::AngleAxisd(xyzabc[3], Eigen::Vector3d::UnitZ()) *
+                                Eigen::AngleAxisd(xyzabc[4], Eigen::Vector3d::UnitY()) *
+                                Eigen::AngleAxisd(xyzabc[5], Eigen::Vector3d::UnitX());
+
+  return {xyzabc[0], xyzabc[1], xyzabc[2], q.x(), q.y(), q.z(), q.w()};
+}
+
+bool KukaRSIHardwareInterfaceBase::DetectPoseSensor(
+  const std::string & sensor_name, bool & has_flag, std::vector<std::string> & state_names)
+{
+  const auto sensor_it = std::find_if(
+    info_.sensors.cbegin(), info_.sensors.cend(),
+    [&sensor_name](const hardware_interface::ComponentInfo & sensor)
+    { return sensor.name == sensor_name; });
+  has_flag = sensor_it != info_.sensors.cend();
+  if (!has_flag)
+  {
+    return true;
+  }
+
+  for (const auto interface_name : kCartesianPoseInterfaceNames)
+  {
+    const std::string expected_name(interface_name);
+    const bool found = std::any_of(
+      sensor_it->state_interfaces.cbegin(), sensor_it->state_interfaces.cend(),
+      [&expected_name](const hardware_interface::InterfaceInfo & state_interface)
+      { return state_interface.name == expected_name; });
+    if (!found)
+    {
+      RCLCPP_FATAL(
+        logger_, "Sensor \"%s\" is missing state interface \"%s\"", sensor_name.c_str(),
+        expected_name.c_str());
+      return false;
+    }
+  }
+
+  state_names.resize(kCartesianPoseInterfaceNames.size());
+  for (size_t i = 0; i < kCartesianPoseInterfaceNames.size(); i++)
+  {
+    state_names[i] = sensor_name + "/" + std::string(kCartesianPoseInterfaceNames[i]);
+  }
+  return true;
 }
 
 bool KukaRSIHardwareInterfaceBase::CheckJointInterfaces(

@@ -33,9 +33,20 @@ Notes
 - Motion-state and control-signal XML mappings are generated from the YAML structure under
   `rsi_xml_config`.
 - Motion-state groups that use the default KRC element names are emitted using their KRC
-  built-in `DEF_` shortcuts (`RIst` -> `DEF_RIst`, `AIPos` -> `DEF_AIPos`,
-  `EIPos` -> `DEF_EIPos`). Groups that use custom element names are expanded into individual,
-  explicitly-indexed `<ELEMENT>` entries.
+  built-in `DEF_` shortcuts (`RIst` -> `DEF_RIst`, `RSol` -> `DEF_RSol`, `AIPos` -> `DEF_AIPos`,
+  `EIPos` -> `DEF_EIPos`, `MACur` -> `DEF_MACur`, `MECur` -> `DEF_MECur`). Groups that use custom
+  element names are expanded into individual, explicitly-indexed `<ELEMENT>` entries.
+- `motion_state.joints.currents` (motor current, e.g. `MACur`/`MECur`) is supported the same way
+  as `velocities`/`torques`.
+- `motion_state.cartesian_setpoint` (setpoint pose, e.g. `RSol`) is supported the same way as
+  `cartesian`, but is disabled by default and must set `enabled: true`.
+- `motion_state.robot_status` (`program_state`/`speed_scaling`, e.g. `ProgStatus.R`/`OvPro.R`) is
+  supported and emitted as individual custom SEND elements.
+- `motion_state.field_order` is supported: if given, it determines the exact SEND emission order
+  (must match what you configure for the driver's own `rsi_xml_config_file` YAML, since the two
+  are independent). If omitted, the default order matches the SDK's own default: CARTESIAN,
+  CARTESIAN_SETPOINT, all JOINT fields (positions, then velocities, then torques, then currents),
+  all GPIO fields, all CUSTOM fields.
 - Delay is always generated as KRC built-in `DEF_Delay` (it is not configurable in YAML) and
   is always placed after all configurable SEND fields.
 - IPOC is handled by RSI runtime and is not configured in this ethernet XML.
@@ -52,8 +63,11 @@ import yaml
 # Default element/attribute names (match SDK defaults)
 _DEFAULT_CARTESIAN_ELEMENT = "RIst"
 _DEFAULT_CARTESIAN_ATTRIBUTES = ["X", "Y", "Z", "A", "B", "C"]
+_DEFAULT_CARTESIAN_SETPOINT_ELEMENT = "RSol"
 _DEFAULT_POSITIONS_ELEMENT = "AIPos"
 _DEFAULT_EXT_JOINT_ELEMENT = "EIPos"
+_DEFAULT_CURRENT_ELEMENT = "MACur"
+_DEFAULT_EXT_CURRENT_ELEMENT = "MECur"
 _DEFAULT_JOINT_CMD_ELEMENT = "AK"
 _DEFAULT_EXT_JOINT_CMD_ELEMENT = "EK"
 _DEFAULT_VELOCITY_CMD_ELEMENT = "VK"
@@ -67,9 +81,15 @@ _DEFAULT_EXT_TORQUE_CMD_ELEMENT = "ETK"
 # expanding the group into individual, explicitly-indexed elements.
 _DEF_SHORTCUTS = {
     _DEFAULT_CARTESIAN_ELEMENT: "DEF_RIst",
+    _DEFAULT_CARTESIAN_SETPOINT_ELEMENT: "DEF_RSol",
     _DEFAULT_POSITIONS_ELEMENT: "DEF_AIPos",
     _DEFAULT_EXT_JOINT_ELEMENT: "DEF_EIPos",
+    _DEFAULT_CURRENT_ELEMENT: "DEF_MACur",
+    _DEFAULT_EXT_CURRENT_ELEMENT: "DEF_MECur",
 }
+
+# field_order.field_type values the driver's parser (and this generator) accept.
+_SUPPORTED_FIELD_TYPES = ("CARTESIAN", "CARTESIAN_SETPOINT", "JOINT", "GPIO", "CUSTOM")
 
 
 def _prettify(elem: ET.Element) -> str:
@@ -124,6 +144,38 @@ def _validate_joint_entries(entries: list, ctx: str) -> None:
         _require_string(entry, "joint_identifier", f"{ctx}[{i}]")
         _require_string(entry, "xml_element", f"{ctx}[{i}]")
         _require_string(entry, "xml_attribute", f"{ctx}[{i}]")
+
+
+def _parse_robot_status_custom_fields(ms_cfg: dict) -> list:
+    """Extract motion_state.robot_status into a custom_fields list.
+
+    Order matches ParseRobotStatus()'s push order in rsi_xml_configuration_parser.cpp:
+    program_state (custom index 0), then speed_scaling (custom index 1).
+    """
+    robot_status_cfg = ms_cfg.get("robot_status")
+    if robot_status_cfg is None:
+        return []
+    if not isinstance(robot_status_cfg, dict):
+        raise ValueError("motion_state.robot_status must be a map.")
+
+    custom_fields = []
+    for key in ("program_state", "speed_scaling"):
+        entry = robot_status_cfg.get(key)
+        if not isinstance(entry, dict):
+            raise ValueError(f"motion_state.robot_status.{key} is required and must be a map.")
+        xml_element = _require_string(entry, "xml_element", f"motion_state.robot_status.{key}")
+        xml_attribute = _require_string(entry, "xml_attribute", f"motion_state.robot_status.{key}")
+        # The driver always parses custom fields as DOUBLE regardless of this; 'type' only
+        # controls how the KRC formats the value it writes into the outgoing telegram.
+        value_type = entry.get("type", "DOUBLE")
+        if value_type not in ("DOUBLE", "LONG"):
+            raise ValueError(
+                f"motion_state.robot_status.{key}.type must be 'DOUBLE' or 'LONG' if set."
+            )
+        custom_fields.append(
+            {"xml_element": xml_element, "xml_attribute": xml_attribute, "type": value_type}
+        )
+    return custom_fields
 
 
 def _add_receive_signal(
@@ -211,8 +263,14 @@ def build_krc_xml(
         joints_cfg, "velocities", len(positions_cfg)
     )
     torques_cfg = _extract_motion_state_signal_entries(joints_cfg, "torques", len(positions_cfg))
+    currents_cfg = _extract_motion_state_signal_entries(joints_cfg, "currents", len(positions_cfg))
     _validate_joint_entries(velocities_cfg, "motion_state.joints.velocities")
     _validate_joint_entries(torques_cfg, "motion_state.joints.torques")
+    _validate_joint_entries(currents_cfg, "motion_state.joints.currents")
+
+    # Matches MotionStateXmlConfiguration::joint_fields declaration order in
+    # rsi_xml_configuration_parser.cpp: positions, then velocities, then torques, then currents.
+    joint_fields = positions_cfg + velocities_cfg + torques_cfg + currents_cfg
 
     ext_positions_send = [
         j for j in positions_cfg if j.get("xml_element", "") == _DEFAULT_EXT_JOINT_ELEMENT
@@ -221,11 +279,108 @@ def build_krc_xml(
     n_external = len(ext_positions_send)
     n_internal = n_joints - n_external
 
+    # Cartesian actual pose (RIst) -- enabled by default.
+    cartesian_cfg = ms_cfg.get("cartesian", {}) or {}
+    cartesian_enabled = cartesian_cfg.get("enabled", True)
+    if not isinstance(cartesian_enabled, bool):
+        raise ValueError("'motion_state.cartesian.enabled' must be boolean when provided.")
+    cartesian_active = bool(cartesian_cfg) and cartesian_enabled
+    cartesian_elem = None
+    cartesian_tags = []
+    if cartesian_active:
+        cartesian_elem = cartesian_cfg.get("xml_element", _DEFAULT_CARTESIAN_ELEMENT)
+        if not isinstance(cartesian_elem, str) or not cartesian_elem:
+            raise ValueError("motion_state.cartesian.xml_element must be a non-empty string.")
+        cartesian_attrs = cartesian_cfg.get("xml_attributes", _DEFAULT_CARTESIAN_ATTRIBUTES)
+        if not isinstance(cartesian_attrs, list) or len(cartesian_attrs) != 6:
+            raise ValueError(
+                "motion_state.cartesian.xml_attributes must be a list with 6 entries."
+            )
+        for attr in cartesian_attrs:
+            if not isinstance(attr, str) or not attr:
+                raise ValueError("motion_state.cartesian.xml_attributes contains invalid value.")
+        cartesian_tags = [f"{cartesian_elem}.{attr}" for attr in cartesian_attrs]
+
+    # Cartesian setpoint pose (RSol) -- disabled by default, unlike cartesian.
+    cartesian_setpoint_cfg = ms_cfg.get("cartesian_setpoint", {}) or {}
+    cartesian_setpoint_enabled = cartesian_setpoint_cfg.get("enabled", False)
+    if not isinstance(cartesian_setpoint_enabled, bool):
+        raise ValueError(
+            "'motion_state.cartesian_setpoint.enabled' must be boolean when provided."
+        )
+    cartesian_setpoint_active = bool(cartesian_setpoint_cfg) and cartesian_setpoint_enabled
+    cartesian_setpoint_elem = None
+    cartesian_setpoint_tags = []
+    if cartesian_setpoint_active:
+        cartesian_setpoint_elem = cartesian_setpoint_cfg.get(
+            "xml_element", _DEFAULT_CARTESIAN_SETPOINT_ELEMENT
+        )
+        if not isinstance(cartesian_setpoint_elem, str) or not cartesian_setpoint_elem:
+            raise ValueError(
+                "motion_state.cartesian_setpoint.xml_element must be a non-empty string."
+            )
+        cartesian_setpoint_attrs = cartesian_setpoint_cfg.get(
+            "xml_attributes", _DEFAULT_CARTESIAN_ATTRIBUTES
+        )
+        if not isinstance(cartesian_setpoint_attrs, list) or len(cartesian_setpoint_attrs) != 6:
+            raise ValueError(
+                "motion_state.cartesian_setpoint.xml_attributes must be a list with 6 entries."
+            )
+        for attr in cartesian_setpoint_attrs:
+            if not isinstance(attr, str) or not attr:
+                raise ValueError(
+                    "motion_state.cartesian_setpoint.xml_attributes contains invalid value."
+                )
+        cartesian_setpoint_tags = [
+            f"{cartesian_setpoint_elem}.{attr}" for attr in cartesian_setpoint_attrs
+        ]
+
+    # GPIO state SEND entries
+    gpio_state_cfg = ms_cfg.get("gpio", {}) or {}
+    gpio_state_attrs = gpio_state_cfg.get("xml_attributes", []) or []
+    gpio_state_elem = gpio_state_cfg.get("xml_element", "GPIO")
+    for attr in gpio_state_attrs:
+        if not isinstance(attr, str) or not attr:
+            raise ValueError("motion_state.gpio.xml_attributes contains invalid value.")
+
+    # Robot status custom fields (ProgStatus/OvPro), program_state then speed_scaling.
+    custom_fields = _parse_robot_status_custom_fields(ms_cfg)
+
+    # ----- Determine SEND emission order -----
+    field_order_cfg = ms_cfg.get("field_order")
+    if field_order_cfg is not None:
+        if not isinstance(field_order_cfg, list):
+            raise ValueError("motion_state.field_order must be a list.")
+        configurable_order = []
+        for i, entry in enumerate(field_order_cfg):
+            if not isinstance(entry, dict) or "field_type" not in entry:
+                raise ValueError(f"motion_state.field_order[{i}] must be a map with 'field_type'.")
+            ftype = entry["field_type"]
+            if ftype not in _SUPPORTED_FIELD_TYPES:
+                raise ValueError(
+                    f"motion_state.field_order[{i}].field_type '{ftype}' is not supported "
+                    f"(expected one of {_SUPPORTED_FIELD_TYPES})."
+                )
+            configurable_order.append((ftype, entry.get("index", 0)))
+    else:
+        # Matches the SDK's own default BuildParseOrder(): CARTESIAN, CARTESIAN_SETPOINT, all
+        # JOINT entries, all GPIO entries, all CUSTOM entries -- in that block order.
+        configurable_order = []
+        if cartesian_active:
+            configurable_order.append(("CARTESIAN", 0))
+        if cartesian_setpoint_active:
+            configurable_order.append(("CARTESIAN_SETPOINT", 0))
+        configurable_order.extend(("JOINT", i) for i in range(len(joint_fields)))
+        configurable_order.extend(("GPIO", i) for i in range(len(gpio_state_attrs)))
+        configurable_order.extend(("CUSTOM", i) for i in range(len(custom_fields)))
+
     # ----- SEND (KRC → PC) -----
     send_el = ET.SubElement(root, "SEND")
     elements_send = ET.SubElement(send_el, "ELEMENTS")
 
     send_index = 1
+    pending_run_elem = None
+    pending_run_tags = []
 
     def _emit_send_group(elem_name, tags, type_="DOUBLE"):
         """
@@ -244,52 +399,62 @@ def build_krc_xml(
             ET.SubElement(elements_send, "ELEMENT", TAG=tag, TYPE=type_, INDX=str(send_index))
             send_index += 1
 
-    # Cartesian motion state
-    cartesian_cfg = ms_cfg.get("cartesian", {}) or {}
-    cartesian_enabled = cartesian_cfg.get("enabled", True)
-    if not isinstance(cartesian_enabled, bool):
-        raise ValueError("'motion_state.cartesian.enabled' must be boolean when provided.")
-    if cartesian_cfg and cartesian_enabled:
-        cartesian_elem = cartesian_cfg.get("xml_element", _DEFAULT_CARTESIAN_ELEMENT)
-        if not isinstance(cartesian_elem, str) or not cartesian_elem:
-            raise ValueError("motion_state.cartesian.xml_element must be a non-empty string.")
-        cartesian_attrs = cartesian_cfg.get("xml_attributes", _DEFAULT_CARTESIAN_ATTRIBUTES)
-        if not isinstance(cartesian_attrs, list) or len(cartesian_attrs) != 6:
-            raise ValueError(
-                "motion_state.cartesian.xml_attributes must be a list with 6 entries."
-            )
-        for attr in cartesian_attrs:
-            if not isinstance(attr, str) or not attr:
-                raise ValueError("motion_state.cartesian.xml_attributes contains invalid value.")
-        _emit_send_group(cartesian_elem, [f"{cartesian_elem}.{attr}" for attr in cartesian_attrs])
+    def _flush_joint_run():
+        nonlocal pending_run_elem, pending_run_tags
+        if pending_run_elem is not None:
+            _emit_send_group(pending_run_elem, pending_run_tags)
+            pending_run_elem = None
+            pending_run_tags = []
 
-    # Joint motion-state mappings. Contiguous runs that share an xml_element are
-    # emitted together so default elements collapse into their DEF_ shortcut.
-    for entries in (positions_cfg, velocities_cfg, torques_cfg):
-        run_elem = None
-        run_tags = []
-        for entry in entries:
+    # Walk the (explicit or default) emission order. Adjacent JOINT entries that share an
+    # xml_element are grouped together so default elements collapse into their DEF_ shortcut,
+    # same as before -- a run only breaks when the element changes or a non-JOINT field appears.
+    for field_type, idx in configurable_order:
+        if field_type == "JOINT":
+            if not isinstance(idx, int) or idx < 0 or idx >= len(joint_fields):
+                raise ValueError(f"motion_state.field_order JOINT index {idx} is out of range.")
+            entry = joint_fields[idx]
             elem = entry["xml_element"]
-            if run_elem is not None and elem != run_elem:
-                _emit_send_group(run_elem, run_tags)
-                run_tags = []
-            run_elem = elem
-            run_tags.append(f"{elem}.{entry['xml_attribute']}")
-        if run_elem is not None:
-            _emit_send_group(run_elem, run_tags)
+            if pending_run_elem is not None and elem != pending_run_elem:
+                _flush_joint_run()
+            pending_run_elem = elem
+            pending_run_tags.append(f"{elem}.{entry['xml_attribute']}")
+            continue
 
-    # GPIO state SEND entries
-    gpio_state_cfg = ms_cfg.get("gpio", {}) or {}
-    gpio_state_attrs = gpio_state_cfg.get("xml_attributes", []) or []
-    gpio_state_elem = gpio_state_cfg.get("xml_element", "GPIO")
-    for attr in gpio_state_attrs:
-        if not isinstance(attr, str) or not attr:
-            raise ValueError("motion_state.gpio.xml_attributes contains invalid value.")
-        tag = f"{gpio_state_elem}.{attr}"
-        ET.SubElement(elements_send, "ELEMENT", TAG=tag, TYPE="BOOL", INDX=str(send_index))
-        send_index += 1
+        _flush_joint_run()
 
-    # Delay is fixed and always present after configurable send fields.
+        if field_type == "CARTESIAN":
+            if not cartesian_active:
+                raise ValueError(
+                    "motion_state.field_order references CARTESIAN but it is disabled."
+                )
+            _emit_send_group(cartesian_elem, cartesian_tags)
+        elif field_type == "CARTESIAN_SETPOINT":
+            if not cartesian_setpoint_active:
+                raise ValueError(
+                    "motion_state.field_order references CARTESIAN_SETPOINT but it is disabled."
+                )
+            _emit_send_group(cartesian_setpoint_elem, cartesian_setpoint_tags)
+        elif field_type == "GPIO":
+            if not isinstance(idx, int) or idx < 0 or idx >= len(gpio_state_attrs):
+                raise ValueError(f"motion_state.field_order GPIO index {idx} is out of range.")
+            tag = f"{gpio_state_elem}.{gpio_state_attrs[idx]}"
+            ET.SubElement(elements_send, "ELEMENT", TAG=tag, TYPE="BOOL", INDX=str(send_index))
+            send_index += 1
+        elif field_type == "CUSTOM":
+            if not isinstance(idx, int) or idx < 0 or idx >= len(custom_fields):
+                raise ValueError(f"motion_state.field_order CUSTOM index {idx} is out of range.")
+            field = custom_fields[idx]
+            tag = f"{field['xml_element']}.{field['xml_attribute']}"
+            ET.SubElement(
+                elements_send, "ELEMENT", TAG=tag, TYPE=field["type"], INDX=str(send_index)
+            )
+            send_index += 1
+
+    _flush_joint_run()
+
+    # Delay is fixed and always present after all configurable send fields (never configurable
+    # via field_order, matching the driver).
     ET.SubElement(elements_send, "ELEMENT", TAG="DEF_Delay", TYPE="LONG", INDX="INTERNAL")
 
     # ----- RECEIVE (PC → KRC) -----
