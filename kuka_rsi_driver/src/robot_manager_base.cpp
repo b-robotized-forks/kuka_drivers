@@ -36,18 +36,17 @@ RobotManagerBase::RobotManagerBase() : kuka_drivers_core::ROS2BaseLCNode("robot_
   this->registerStaticParameter<std::string>(
     "controller_manager_name", "controller_manager",
     kuka_drivers_core::ParameterSetAccessRights{false, false},
-    [this](const std::string cm_name){
-        controller_manager_name_ = cm_name;
-        return true;
-    }
-  );
-
+    [this](const std::string cm_name)
+    {
+      controller_manager_name_ = cm_name;
+      return true;
+    });
 
   change_hardware_state_client_ = this->create_client<SetHardwareComponentState>(
     controller_manager_name_ + "/set_hardware_component_state", qos, cbg_);
 
-  change_controller_state_client_ =
-    this->create_client<SwitchController>(controller_manager_name_ + "/switch_controller", qos, cbg_);
+  change_controller_state_client_ = this->create_client<SwitchController>(
+    controller_manager_name_ + "/switch_controller", qos, cbg_);
 
   auto is_configured_qos = rclcpp::QoS(rclcpp::KeepLast(1));
   is_configured_qos.best_effort();

@@ -67,7 +67,7 @@ install(DIRECTORY config launch test
 
 if(BUILD_TESTING)
   find_package(launch_testing_ament_cmake REQUIRED)
-  
+
   if(kuka-external-control-sdk_FOUND)
     add_launch_test(test/test_driver_startup.py)
     add_launch_test(test/test_driver_activation.py)

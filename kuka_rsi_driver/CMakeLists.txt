@@ -46,20 +46,20 @@ if(kuka-external-control-sdk_FOUND)
     src/hardware_interface_rsi_only.cpp
     src/hardware_interface_mxa_rsi.cpp
   )
-  
+
   # Causes the visibility macros to use dllexport rather than dllimport,
   # which is appropriate when building the dll but not consuming it.
   target_compile_definitions(${PROJECT_NAME} PRIVATE "KUKA_RSI_DRIVER_BUILDING_LIBRARY")
   # prevent pluginlib from using boost
   target_compile_definitions(${PROJECT_NAME} PUBLIC "PLUGINLIB__DISABLE_BOOST_FUNCTIONS")
-  
+
   ament_target_dependencies(${PROJECT_NAME} hardware_interface kuka_drivers_core kuka-external-control-sdk)
   target_link_libraries(${PROJECT_NAME} Kuka::kuka-external-control-sdk)
-  
+
   pluginlib_export_plugin_description_file(hardware_interface eki_rsi_hardware_interface.xml)
   pluginlib_export_plugin_description_file(hardware_interface rsi_hardware_interface.xml)
   pluginlib_export_plugin_description_file(hardware_interface mxa_rsi_hardware_interface.xml)
-  
+
   install(
     TARGETS ${PROJECT_NAME}
     DESTINATION lib/${PROJECT_NAME}

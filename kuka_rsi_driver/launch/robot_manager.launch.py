@@ -38,7 +38,14 @@ def launch_setup(context, *args, **kwargs):
             if driver_version.perform(context) == "rsi_only"
             else "robot_manager_node_extended"
         ),
-        parameters=[driver_config, {"robot_model": robot_model, "use_gpio": use_gpio, "controller_manager_name": controller_manager_name}],
+        parameters=[
+            driver_config,
+            {
+                "robot_model": robot_model,
+                "use_gpio": use_gpio,
+                "controller_manager_name": controller_manager_name,
+            },
+        ],
     )
 
     return [robot_manager_node]
@@ -46,7 +53,9 @@ def launch_setup(context, *args, **kwargs):
 
 def generate_launch_description():
     launch_arguments = []
-    launch_arguments.append(DeclareLaunchArgument("controller_manager_name", default_value="b_controlled_box_cm"))
+    launch_arguments.append(
+        DeclareLaunchArgument("controller_manager_name", default_value="b_controlled_box_cm")
+    )
     launch_arguments.append(DeclareLaunchArgument("robot_model", default_value="kr6_r700_sixx"))
     launch_arguments.append(
         DeclareLaunchArgument("use_gpio", default_value="false", choices=["true", "false"])
