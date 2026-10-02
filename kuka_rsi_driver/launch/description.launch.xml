@@ -18,7 +18,7 @@
   <arg name="mxa_client_port" default="1337" description="MXA client port"/>
   <arg name="controller_ip" default="10.28.23.240" description="Controller IP address"/>
   <arg name="roundtrip_time" default="4000" description="RSI roundtrip time in microseconds"/>
-  <!-- for now no verification becase of the issue -->
+  <!-- for now no verification because of the issue -->
   <arg name="verify_robot_model" default="false" description="Verify robot model on startup"/>
 
   <!-- Robot position arguments -->

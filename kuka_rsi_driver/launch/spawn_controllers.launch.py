@@ -25,6 +25,7 @@ def launch_setup(context, *args, **kwargs):
     ns = LaunchConfiguration("namespace")
     jtc_config = LaunchConfiguration("jtc_config")
     gpio_config = LaunchConfiguration("gpio_config")
+    controller_manager_name = LaunchConfiguration("controller_manager_name")
 
     # Spawn controllers
     def controller_spawner(controller_name, param_file=None, activate=False):
@@ -35,7 +36,7 @@ def launch_setup(context, *args, **kwargs):
             "-n",
             ns,
             "-p",
-            "scenario_controllers.yaml"
+            "scenario_controllers.yaml",
         ]
 
         # Add param-file if it's provided
@@ -65,8 +66,7 @@ def launch_setup(context, *args, **kwargs):
         controllers["kss_message_handler"] = None
 
     controller_spawners = [
-        controller_spawner(name, param_file)
-        for name, param_file in controllers.items()
+        controller_spawner(name, param_file) for name, param_file in controllers.items()
     ]
 
     return controller_spawners
@@ -99,6 +99,9 @@ def generate_launch_description():
             default_value=get_package_share_directory("kuka_rsi_driver")
             + "/config/gpio_controller_config.yaml",
         )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument("controller_manager_name", default_value="b_controlled_box_cm")
     )
 
     return LaunchDescription(launch_arguments + [OpaqueFunction(function=launch_setup)])

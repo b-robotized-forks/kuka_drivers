@@ -43,7 +43,7 @@ def launch_setup(context, *args, **kwargs):
     roundtrip_time = LaunchConfiguration("roundtrip_time")
     verify_robot_model = LaunchConfiguration("verify_robot_model")
     ns = LaunchConfiguration("namespace")
-    
+
     if ns.perform(context) == "":
         tf_prefix = ""
     else:
