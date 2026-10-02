@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <vector>
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
@@ -34,14 +35,118 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
   hw_states_.resize(info_.joints.size(), 0.0);
   hw_commands_.resize(info_.joints.size(), 0.0);
 
+  const std::string current_interface_name(kCurrentInterfaceName);
+  has_current_interface_ =
+    !info_.joints.empty() &&
+    std::any_of(
+      info_.joints[0].state_interfaces.cbegin(), info_.joints[0].state_interfaces.cend(),
+      [&current_interface_name](const auto & state_interface)
+      { return state_interface.name == current_interface_name; });
+  hw_current_states_.resize(has_current_interface_ ? info_.joints.size() : 0, 0.0);
+
+  const std::string torque_interface_name(kTorqueInterfaceName);
+  has_torque_interface_ =
+    !info_.joints.empty() &&
+    std::any_of(
+      info_.joints[0].state_interfaces.cbegin(), info_.joints[0].state_interfaces.cend(),
+      [&torque_interface_name](const auto & state_interface)
+      { return state_interface.name == torque_interface_name; });
+  hw_torque_states_.resize(has_torque_interface_ ? info_.joints.size() : 0, 0.0);
+
   for (const auto & joint : info_.joints)
   {
-    bool interfaces_ok = CheckJointInterfaces(joint);
+    bool interfaces_ok = CheckJointInterfaces(joint, has_current_interface_, has_torque_interface_);
     if (!interfaces_ok)
     {
       return CallbackReturn::ERROR;
     }
   }
+
+  // Optional: a "cartesian_setpoint" sensor component with 6 state interfaces (x, y, z, a, b, c),
+  // see ConfigureMotionStateXml() -- requires the robot's RSI config to transmit RSol.
+  const std::string cartesian_setpoint_sensor_name(kCartesianSetpointSensorName);
+  const auto sensor_it = std::find_if(
+    info_.sensors.cbegin(), info_.sensors.cend(), [&cartesian_setpoint_sensor_name](
+                                                      const auto & sensor)
+    { return sensor.name == cartesian_setpoint_sensor_name; });
+  has_cartesian_setpoint_sensor_ = sensor_it != info_.sensors.cend();
+  if (has_cartesian_setpoint_sensor_)
+  {
+    for (const auto & interface_name : kCartesianSetpointInterfaceNames)
+    {
+      const std::string expected_name(interface_name);
+      const bool found = std::any_of(
+        sensor_it->state_interfaces.cbegin(), sensor_it->state_interfaces.cend(),
+        [&expected_name](const auto & state_interface)
+        { return state_interface.name == expected_name; });
+      if (!found)
+      {
+        RCLCPP_FATAL(
+          logger_, "Sensor \"cartesian_setpoint\" is missing state interface \"%s\"",
+          expected_name.c_str());
+        return CallbackReturn::ERROR;
+      }
+    }
+  }
+  hw_cartesian_setpoint_states_.resize(has_cartesian_setpoint_sensor_ ? 6 : 0, 0.0);
+
+  // Optional: a "cartesian_pose" sensor component with 6 state interfaces (x, y, z, a, b, c) --
+  // the actual Cartesian pose (RIst), which is always parsed regardless of configuration, so
+  // (unlike cartesian_setpoint) this needs no robot-side RSI config change.
+  const std::string cartesian_pose_sensor_name(kCartesianPoseSensorName);
+  const auto pose_sensor_it = std::find_if(
+    info_.sensors.cbegin(), info_.sensors.cend(),
+    [&cartesian_pose_sensor_name](const auto & sensor)
+    { return sensor.name == cartesian_pose_sensor_name; });
+  has_cartesian_pose_sensor_ = pose_sensor_it != info_.sensors.cend();
+  if (has_cartesian_pose_sensor_)
+  {
+    for (const auto & interface_name : kCartesianSetpointInterfaceNames)
+    {
+      const std::string expected_name(interface_name);
+      const bool found = std::any_of(
+        pose_sensor_it->state_interfaces.cbegin(), pose_sensor_it->state_interfaces.cend(),
+        [&expected_name](const auto & state_interface)
+        { return state_interface.name == expected_name; });
+      if (!found)
+      {
+        RCLCPP_FATAL(
+          logger_, "Sensor \"cartesian_pose\" is missing state interface \"%s\"",
+          expected_name.c_str());
+        return CallbackReturn::ERROR;
+      }
+    }
+  }
+  hw_cartesian_pose_states_.resize(has_cartesian_pose_sensor_ ? 6 : 0, 0.0);
+
+  // Optional: a "robot_status" sensor component with 2 state interfaces (program_state,
+  // speed_scaling_factor) -- requires the robot's RSI config to transmit ProgStatus.R/OvPro.R,
+  // see ConfigureMotionStateXml().
+  const std::string robot_status_sensor_name(kRobotStatusSensorName);
+  const auto status_sensor_it = std::find_if(
+    info_.sensors.cbegin(), info_.sensors.cend(),
+    [&robot_status_sensor_name](const auto & sensor)
+    { return sensor.name == robot_status_sensor_name; });
+  has_robot_status_sensor_ = status_sensor_it != info_.sensors.cend();
+  if (has_robot_status_sensor_)
+  {
+    for (const auto & interface_name : kRobotStatusInterfaceNames)
+    {
+      const std::string expected_name(interface_name);
+      const bool found = std::any_of(
+        status_sensor_it->state_interfaces.cbegin(), status_sensor_it->state_interfaces.cend(),
+        [&expected_name](const auto & state_interface)
+        { return state_interface.name == expected_name; });
+      if (!found)
+      {
+        RCLCPP_FATAL(
+          logger_, "Sensor \"robot_status\" is missing state interface \"%s\"",
+          expected_name.c_str());
+        return CallbackReturn::ERROR;
+      }
+    }
+  }
+  hw_robot_status_states_.resize(has_robot_status_sensor_ ? kRobotStatusInterfaceNames.size() : 0, 0.0);
 
   // Check gpio components size
   if (info_.gpios.size() != 1)
@@ -98,6 +203,54 @@ KukaRSIHardwareInterfaceBase::export_state_interfaces()
   {
     state_interfaces.emplace_back(
       info_.joints[i].name, hardware_interface::HW_IF_POSITION, &hw_states_[i]);
+  }
+
+  if (has_current_interface_)
+  {
+    for (size_t i = 0; i < info_.joints.size(); i++)
+    {
+      state_interfaces.emplace_back(
+        info_.joints[i].name, std::string(kCurrentInterfaceName), &hw_current_states_[i]);
+    }
+  }
+
+  if (has_torque_interface_)
+  {
+    for (size_t i = 0; i < info_.joints.size(); i++)
+    {
+      state_interfaces.emplace_back(
+        info_.joints[i].name, std::string(kTorqueInterfaceName), &hw_torque_states_[i]);
+    }
+  }
+
+  if (has_cartesian_setpoint_sensor_)
+  {
+    for (size_t i = 0; i < kCartesianSetpointInterfaceNames.size(); i++)
+    {
+      state_interfaces.emplace_back(
+        std::string(kCartesianSetpointSensorName), std::string(kCartesianSetpointInterfaceNames[i]),
+        &hw_cartesian_setpoint_states_[i]);
+    }
+  }
+
+  if (has_cartesian_pose_sensor_)
+  {
+    for (size_t i = 0; i < kCartesianSetpointInterfaceNames.size(); i++)
+    {
+      state_interfaces.emplace_back(
+        std::string(kCartesianPoseSensorName), std::string(kCartesianSetpointInterfaceNames[i]),
+        &hw_cartesian_pose_states_[i]);
+    }
+  }
+
+  if (has_robot_status_sensor_)
+  {
+    for (size_t i = 0; i < kRobotStatusInterfaceNames.size(); i++)
+    {
+      state_interfaces.emplace_back(
+        std::string(kRobotStatusSensorName), std::string(kRobotStatusInterfaceNames[i]),
+        &hw_robot_status_states_[i]);
+    }
   }
 
   for (size_t i = 0; i < info_.gpios[0].state_interfaces.size(); i++)
@@ -203,6 +356,8 @@ bool KukaRSIHardwareInterfaceBase::SetupRobot(
     config.gpio_state_configs.emplace_back(ParseGPIOConfig(gpio_state));
   }
 
+  ConfigureMotionStateXml(config);
+
   CreateRobotInstance(config);
 
   if (event_handler != nullptr)
@@ -271,6 +426,46 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
     const auto & gpio_values = req_message.GetGPIOValues();
 
     std::copy(positions.cbegin(), positions.cend(), hw_states_.begin());
+    if (has_current_interface_)
+    {
+      const auto & currents = req_message.GetMeasuredCurrents();
+      std::copy(currents.cbegin(), currents.cend(), hw_current_states_.begin());
+    }
+    if (has_cartesian_setpoint_sensor_)
+    {
+      const auto & cartesian_setpoints = req_message.GetMeasuredCartesianSetpoints();
+      std::copy(
+        cartesian_setpoints.cbegin(), cartesian_setpoints.cend(),
+        hw_cartesian_setpoint_states_.begin());
+    }
+    if (has_cartesian_pose_sensor_)
+    {
+      const auto & cartesian_positions = req_message.GetMeasuredCartesianPositions();
+      std::copy(
+        cartesian_positions.cbegin(), cartesian_positions.cend(), hw_cartesian_pose_states_.begin());
+    }
+    if (has_robot_status_sensor_)
+    {
+      const auto & custom_values = req_message.GetMeasuredCustomValues();
+      const double program_state = custom_values[0];
+      hw_robot_status_states_[0] = program_state;
+      // OvPro is a 0-100 percentage; normalize to 0-1, and treat it as meaningless (0) whenever
+      // the program isn't actually running, matching how $OV_PRO is only a live override on a
+      // running program.
+      hw_robot_status_states_[1] =
+        (program_state == kProgramStatusRunning) ? (custom_values[1] / 100.0) : 0.0;
+    }
+    if (has_torque_interface_)
+    {
+      // GearTorque.A1-A6 custom entries always come right after ProgStatus/OvPro (if enabled) in
+      // the custom_fields list built by ConfigureMotionStateXml() -- see there.
+      const auto & custom_values = req_message.GetMeasuredCustomValues();
+      const std::size_t torque_offset = has_robot_status_sensor_ ? 2 : 0;
+      for (std::size_t i = 0; i < hw_torque_states_.size(); ++i)
+      {
+        hw_torque_states_[i] = custom_values[torque_offset + i];
+      }
+    }
     // Save IO states
     for (size_t i = 0; i < hw_gpio_states_.size(); i++)
     {
@@ -315,7 +510,7 @@ void KukaRSIHardwareInterfaceBase::set_server_event(kuka_drivers_core::HardwareE
 }
 
 bool KukaRSIHardwareInterfaceBase::CheckJointInterfaces(
-  const hardware_interface::ComponentInfo & joint) const
+  const hardware_interface::ComponentInfo & joint, bool expect_current, bool expect_torque) const
 {
   if (joint.command_interfaces.size() != 1)
   {
@@ -329,16 +524,55 @@ bool KukaRSIHardwareInterfaceBase::CheckJointInterfaces(
     return false;
   }
 
-  if (joint.state_interfaces.size() != 1)
+  const std::size_t expected_state_interfaces =
+    1 + (expect_current ? 1 : 0) + (expect_torque ? 1 : 0);
+  if (joint.state_interfaces.size() != expected_state_interfaces)
   {
-    RCLCPP_FATAL(logger_, "Expecting exactly 1 state interface");
+    RCLCPP_FATAL(
+      logger_, "Expecting exactly %zu state interface(s)", expected_state_interfaces);
     return false;
   }
 
-  if (joint.state_interfaces[0].name != hardware_interface::HW_IF_POSITION)
+  const bool has_position = std::any_of(
+    joint.state_interfaces.cbegin(), joint.state_interfaces.cend(),
+    [](const auto & state_interface)
+    { return state_interface.name == hardware_interface::HW_IF_POSITION; });
+  if (!has_position)
   {
-    RCLCPP_FATAL(logger_, "Expecting only POSITION state interface");
+    RCLCPP_FATAL(logger_, "Expecting a POSITION state interface");
     return false;
+  }
+
+  if (expect_current)
+  {
+    const std::string current_interface_name(kCurrentInterfaceName);
+    const bool has_current = std::any_of(
+      joint.state_interfaces.cbegin(), joint.state_interfaces.cend(),
+      [&current_interface_name](const auto & state_interface)
+      { return state_interface.name == current_interface_name; });
+    if (!has_current)
+    {
+      RCLCPP_FATAL(
+        logger_,
+        "Every joint must declare a CURRENT state interface if any joint declares one");
+      return false;
+    }
+  }
+
+  if (expect_torque)
+  {
+    const std::string torque_interface_name(kTorqueInterfaceName);
+    const bool has_torque = std::any_of(
+      joint.state_interfaces.cbegin(), joint.state_interfaces.cend(),
+      [&torque_interface_name](const auto & state_interface)
+      { return state_interface.name == torque_interface_name; });
+    if (!has_torque)
+    {
+      RCLCPP_FATAL(
+        logger_,
+        "Every joint must declare a TORQUE state interface if any joint declares one");
+      return false;
+    }
   }
 
   return true;
@@ -648,6 +882,175 @@ void KukaRSIHardwareInterfaceBase::ConfigureJoints(
       logger_, "Configured joint \"" << joint.name << "\": type=" << JC::TypeToString(type)
                                      << ", external=" << (is_external ? "true" : "false"));
   }
+}
+
+void KukaRSIHardwareInterfaceBase::ConfigureMotionStateXml(
+  kuka::external::control::kss::Configuration & config) const
+{
+  // Leave the SDK's default motion-state XML layout (position + GPIO only) untouched unless the
+  // URDF opted into a "current"/"torque" state interface (checked in on_init() via
+  // CheckJointInterfaces()) and/or a "cartesian_setpoint"/"robot_status" sensor component --
+  // these require the robot's RSI config to also transmit the internal MACur/MECur (motor
+  // current), RSol (setpoint pose), and/or the custom ProgStatus.R/OvPro.R/GearTorque.A1-A6
+  // elements, see the aip_cell_configuration docs for how to enable that on the KRC side.
+  if (
+    !has_current_interface_ && !has_torque_interface_ && !has_cartesian_setpoint_sensor_ &&
+    !has_robot_status_sensor_)
+  {
+    return;
+  }
+
+  using MSF = kuka::external::control::kss::MotionStateJointFieldConfiguration;
+  using MSST = kuka::external::control::kss::MotionStateSignalType;
+  using MSXFT = kuka::external::control::kss::MotionStateXmlFieldType;
+
+  kuka::external::control::kss::MotionStateXmlConfiguration xml_config;
+
+  if (has_cartesian_setpoint_sensor_)
+  {
+    xml_config.cartesian_setpoint.enabled = true;
+    // xml_element defaults to "RSol", xml_attributes default to {X,Y,Z,A,B,C} -- matches this
+    // cell's robot-side SEND declaration.
+  }
+
+  if (has_robot_status_sensor_)
+  {
+    // NOTE: position assumed to match this cell's convention of appending new custom elements
+    // right before Delay (same as MACur) -- verify against the robot's actual SEND declaration
+    // order for ProgStatus.R/OvPro.R and adjust field_order below if it differs.
+    xml_config.custom_fields.push_back({"ProgStatus", "R"});
+    xml_config.custom_fields.push_back({"OvPro", "R"});
+  }
+
+  if (has_torque_interface_)
+  {
+    // GearTorque.A1-A6: one custom entry per internal joint (in URDF joint declaration order),
+    // matching the RSIVisual "GearTorque" object's A1-A6 outputs -- this object is a custom
+    // element (not an internal RSI keyword like MACur/MECur), so it goes through the custom-field
+    // mechanism. Assumed to be declared right after ProgStatus/OvPro (if enabled) and before Delay
+    // in the robot's SEND config -- verify against the actual declaration order and adjust
+    // field_order below if it differs. This cell has no external axes; if it ever does,
+    // GearTorqueExt.E1-E6 would need the same treatment.
+    std::size_t torque_idx = 1;
+    for (const auto & joint : config.joint_configs)
+    {
+      if (!joint.is_external)
+      {
+        xml_config.custom_fields.push_back({"GearTorque", "A" + std::to_string(torque_idx++)});
+      }
+    }
+  }
+
+  xml_config.gpio_xml_attributes.reserve(config.gpio_state_configs.size());
+  for (const auto & gpio : config.gpio_state_configs)
+  {
+    xml_config.gpio_xml_attributes.push_back(gpio.name);
+  }
+
+  // Unlike RIst/AIPos/EIPos/Delay, MACur/MECur are not part of the RSI wire format's fixed
+  // internal-element block -- they appear wherever they were declared in the robot-side SEND
+  // element list, which on this cell's config is AFTER the GPIO elements and right before Delay
+  // (<RIst><RSol><AIPos><EIPos><GPIO><MACur><Delay><IPOC>). We therefore build joint position
+  // fields and current fields as separate groups below and place them explicitly in field_order
+  // to match -- if the robot's RSI config is ever redeclared with MACur/RSol elsewhere, this
+  // ordering (and the explicit field_order built below) must be updated to match.
+  std::size_t internal_idx = 1;
+  std::size_t external_idx = 1;
+  std::vector<MSF> internal_position_fields;
+  std::vector<MSF> external_position_fields;
+  std::vector<MSF> internal_current_fields;
+  std::vector<MSF> external_current_fields;
+
+  for (const auto & joint : config.joint_configs)
+  {
+    MSF position_field;
+    position_field.joint_identifier = joint.name;
+    position_field.signal_type = MSST::POSITION;
+
+    if (joint.is_external)
+    {
+      position_field.xml_element = "EIPos";
+      external_position_fields.push_back(std::move(position_field));
+    }
+    else
+    {
+      position_field.xml_element = "AIPos";
+      internal_position_fields.push_back(std::move(position_field));
+    }
+
+    if (has_current_interface_)
+    {
+      MSF current_field;
+      current_field.joint_identifier = joint.name;
+      current_field.signal_type = MSST::CURRENT;
+      if (joint.is_external)
+      {
+        current_field.xml_element = "MECur";
+        external_current_fields.push_back(std::move(current_field));
+      }
+      else
+      {
+        current_field.xml_element = "MACur";
+        internal_current_fields.push_back(std::move(current_field));
+      }
+    }
+  }
+
+  for (auto & field : internal_position_fields)
+  {
+    field.xml_attribute = "A" + std::to_string(internal_idx++);
+    xml_config.joint_fields.push_back(std::move(field));
+  }
+  for (auto & field : external_position_fields)
+  {
+    field.xml_attribute = "E" + std::to_string(external_idx++);
+    xml_config.joint_fields.push_back(std::move(field));
+  }
+  const std::size_t num_position_fields = xml_config.joint_fields.size();
+
+  internal_idx = 1;
+  external_idx = 1;
+  for (auto & field : internal_current_fields)
+  {
+    field.xml_attribute = "A" + std::to_string(internal_idx++);
+    xml_config.joint_fields.push_back(std::move(field));
+  }
+  for (auto & field : external_current_fields)
+  {
+    field.xml_attribute = "E" + std::to_string(external_idx++);
+    xml_config.joint_fields.push_back(std::move(field));
+  }
+
+  // Explicit parse order matching this cell's robot-side SEND declaration order:
+  // Cartesian, cartesian setpoint, position joints, GPIO, current joints, custom fields
+  // (ProgStatus/OvPro, then GearTorque.A1-A6), Delay (IPOC is always appended last by the SDK).
+  // See the comment above for why current/setpoint/custom fields can't just be grouped with
+  // position fields the way the SDK's own default ordering would do.
+  xml_config.field_order.reserve(3 + xml_config.joint_fields.size() + xml_config.gpio_xml_attributes.size());
+  xml_config.field_order.push_back({MSXFT::CARTESIAN, 0});
+  if (has_cartesian_setpoint_sensor_)
+  {
+    xml_config.field_order.push_back({MSXFT::CARTESIAN_SETPOINT, 0});
+  }
+  for (std::size_t i = 0; i < num_position_fields; ++i)
+  {
+    xml_config.field_order.push_back({MSXFT::JOINT, i});
+  }
+  for (std::size_t i = 0; i < xml_config.gpio_xml_attributes.size(); ++i)
+  {
+    xml_config.field_order.push_back({MSXFT::GPIO, i});
+  }
+  for (std::size_t i = num_position_fields; i < xml_config.joint_fields.size(); ++i)
+  {
+    xml_config.field_order.push_back({MSXFT::JOINT, i});
+  }
+  for (std::size_t i = 0; i < xml_config.custom_fields.size(); ++i)
+  {
+    xml_config.field_order.push_back({MSXFT::CUSTOM, i});
+  }
+  xml_config.field_order.push_back({MSXFT::DELAY, 0});
+
+  config.motion_state_xml_config = std::move(xml_config);
 }
 
 }  // namespace kuka_rsi_driver

@@ -11,6 +11,7 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <exec_depend>kuka_cartesian_setpoint_broadcaster</exec_depend>
   <exec_depend>kuka_control_mode_handler</exec_depend>
   <exec_depend>kuka_event_broadcaster</exec_depend>
   <exec_depend>kuka_kss_message_handler</exec_depend>
