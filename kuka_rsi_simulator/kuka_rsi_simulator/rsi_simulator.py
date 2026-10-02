@@ -29,6 +29,10 @@ def _default_rsi_xml_config():
         "motion_state_cartesian_enabled": True,
         "motion_state_cartesian_element": "RIst",
         "motion_state_cartesian_attributes": ["X", "Y", "Z", "A", "B", "C"],
+        # Setpoint Cartesian pose (RSol). Disabled by default, unlike cartesian/RIst.
+        "motion_state_cartesian_setpoint_enabled": False,
+        "motion_state_cartesian_setpoint_element": "RSol",
+        "motion_state_cartesian_setpoint_attributes": ["X", "Y", "Z", "A", "B", "C"],
         "motion_state_position_mappings": [
             ("AIPos", "A1", 0),
             ("AIPos", "A2", 1),
@@ -45,6 +49,20 @@ def _default_rsi_xml_config():
         ],
         "motion_state_velocity_mappings": [],
         "motion_state_torque_mappings": [],
+        # Motor current (MACur/MECur).
+        "motion_state_current_mappings": [],
+        # GPIO state elements -- omitted (empty attributes) unless motion_state.gpio is set.
+        "motion_state_gpio_element": "GPIO",
+        "motion_state_gpio_attributes": [],
+        # Robot status custom fields (ProgStatus/OvPro). Each is None or a
+        # (xml_element, xml_attribute, value_type) tuple; value_type is "LONG" or "DOUBLE" and
+        # only affects how the fake value is formatted on the wire.
+        "motion_state_robot_status_program_state": None,
+        "motion_state_robot_status_speed_scaling": None,
+        # Explicit SEND emission order: None means "use the SDK's default grouping" (CARTESIAN,
+        # CARTESIAN_SETPOINT, all JOINT fields, all GPIO, all CUSTOM); otherwise a list of
+        # (field_type, index) tuples, mirroring the driver's motion_state.field_order.
+        "motion_state_field_order": None,
         "motion_state_delay_element": "Delay",
         "motion_state_delay_attribute": "D",
         "motion_state_ipoc_element": "IPOC",
@@ -60,6 +78,10 @@ def _default_rsi_xml_config():
         "control_signal_torque_attributes": [],
         "control_signal_ext_torque_element": "ETK",
         "control_signal_ext_torque_attributes": [],
+        # Only the element name is configurable here, matching the real driver: outgoing GPIO
+        # command attribute names always come from the hardware's own declared GPIO command
+        # interfaces, not from this YAML (see RsiXmlConfigurationParser::ParseControlSignal).
+        "control_signal_gpio_element": "GPIO",
         "control_signal_ipoc_element": "IPOC",
     }
 
@@ -105,6 +127,21 @@ def _load_rsi_xml_config(config_path):
         )
         config["motion_state_cartesian_attributes"] = cartesian.get(
             "xml_attributes", config["motion_state_cartesian_attributes"]
+        )
+
+    cartesian_setpoint = motion_state.get("cartesian_setpoint") or {}
+    if cartesian_setpoint:
+        cartesian_setpoint_enabled = cartesian_setpoint.get("enabled", False)
+        if not isinstance(cartesian_setpoint_enabled, bool):
+            raise ValueError(
+                "'motion_state.cartesian_setpoint.enabled' must be boolean when provided."
+            )
+        config["motion_state_cartesian_setpoint_enabled"] = cartesian_setpoint_enabled
+        config["motion_state_cartesian_setpoint_element"] = cartesian_setpoint.get(
+            "xml_element", config["motion_state_cartesian_setpoint_element"]
+        )
+        config["motion_state_cartesian_setpoint_attributes"] = cartesian_setpoint.get(
+            "xml_attributes", config["motion_state_cartesian_setpoint_attributes"]
         )
 
     def _parse_motion_state_signal_entries(
@@ -204,6 +241,60 @@ def _load_rsi_xml_config(config_path):
             config["motion_state_torque_mappings"] = _parse_motion_state_signal_entries(
                 joints.get("torques"), "torques", len(joint_mappings), joint_mappings
             )
+            config["motion_state_current_mappings"] = _parse_motion_state_signal_entries(
+                joints.get("currents"), "currents", len(joint_mappings), joint_mappings
+            )
+
+    gpio = motion_state.get("gpio") or {}
+    if gpio:
+        config["motion_state_gpio_element"] = gpio.get(
+            "xml_element", config["motion_state_gpio_element"]
+        )
+        gpio_attrs = gpio.get("xml_attributes")
+        if gpio_attrs is not None:
+            if not isinstance(gpio_attrs, list):
+                raise ValueError("'motion_state.gpio.xml_attributes' must be a list.")
+            config["motion_state_gpio_attributes"] = gpio_attrs
+
+    robot_status = motion_state.get("robot_status") or {}
+    if robot_status:
+        if not isinstance(robot_status, dict):
+            raise ValueError("'motion_state.robot_status' must be a dictionary.")
+        for key, config_key in (
+            ("program_state", "motion_state_robot_status_program_state"),
+            ("speed_scaling", "motion_state_robot_status_speed_scaling"),
+        ):
+            entry = robot_status.get(key)
+            if entry is None:
+                raise ValueError(f"'motion_state.robot_status.{key}' is required when set.")
+            if not isinstance(entry, dict):
+                raise ValueError(f"'motion_state.robot_status.{key}' must be a dictionary.")
+            xml_element = entry.get("xml_element")
+            xml_attribute = entry.get("xml_attribute")
+            if not xml_element or not xml_attribute:
+                raise ValueError(
+                    f"'motion_state.robot_status.{key}' requires 'xml_element' and "
+                    "'xml_attribute'."
+                )
+            value_type = entry.get("type", "DOUBLE")
+            config[config_key] = (xml_element, xml_attribute, value_type)
+
+    field_order = motion_state.get("field_order")
+    if field_order is not None:
+        if not isinstance(field_order, list):
+            raise ValueError("'motion_state.field_order' must be a list.")
+        parsed_order = []
+        for i, entry in enumerate(field_order):
+            if not isinstance(entry, dict) or "field_type" not in entry:
+                raise ValueError(f"'motion_state.field_order[{i}]' must have a 'field_type'.")
+            field_type = entry["field_type"]
+            if field_type not in ("CARTESIAN", "CARTESIAN_SETPOINT", "JOINT", "GPIO", "CUSTOM"):
+                raise ValueError(
+                    f"'motion_state.field_order[{i}].field_type' = '{field_type}' is not "
+                    "supported."
+                )
+            parsed_order.append((field_type, entry.get("index", 0)))
+        config["motion_state_field_order"] = parsed_order
 
     delay = motion_state.get("delay") or {}
     if delay:
@@ -294,6 +385,14 @@ def _load_rsi_xml_config(config_path):
         inferred_external_attributes,
     )
 
+    control_gpio = control_signal.get("gpio") or {}
+    if control_gpio:
+        # Only the element name is configurable, matching the real driver -- attribute names
+        # always come from the hardware's own declared GPIO command interfaces.
+        config["control_signal_gpio_element"] = control_gpio.get(
+            "xml_element", config["control_signal_gpio_element"]
+        )
+
     control_ipoc = control_signal.get("ipoc") or {}
     if control_ipoc:
         config["control_signal_ipoc_element"] = control_ipoc.get(
@@ -303,38 +402,122 @@ def _load_rsi_xml_config(config_path):
     return config
 
 
-def _append_joint_signal_elements(root, mappings, values):
-    joint_elements = {}
-    for xml_element, xml_attribute, joint_idx in mappings:
-        if joint_idx < len(values):
-            if xml_element not in joint_elements:
-                joint_elements[xml_element] = {}
-            joint_elements[xml_element][xml_attribute] = str(values[joint_idx])
+def _joint_fields(xml_config, act_joint_pos, act_joint_vel, act_joint_torque, act_joint_current):
+    """Flattens position/velocity/torque/current mappings into one list, in the same
+    declaration order the real driver builds MotionStateXmlConfiguration::joint_fields (see
+    ParseJointMotionState in rsi_xml_configuration_parser.cpp): positions, then velocities, then
+    torques, then currents. Each entry is (xml_element, xml_attribute, value)."""
+    fields = []
+    for values, mappings in (
+        (act_joint_pos, xml_config["motion_state_position_mappings"]),
+        (act_joint_vel, xml_config["motion_state_velocity_mappings"]),
+        (act_joint_torque, xml_config["motion_state_torque_mappings"]),
+        (act_joint_current, xml_config["motion_state_current_mappings"]),
+    ):
+        for xml_element, xml_attribute, joint_idx in mappings:
+            value = values[joint_idx] if joint_idx < len(values) else 0.0
+            fields.append((xml_element, xml_attribute, value))
+    return fields
 
-    for xml_element, attrs in joint_elements.items():
-        ET.SubElement(root, xml_element, attrs)
+
+def _custom_fields(xml_config):
+    """Builds the robot_status custom_fields list (program_state then speed_scaling, matching
+    ParseRobotStatus()'s push order in the real driver), with plausible fake values:
+    program_state=3 (RUNNING), speed_scaling=100.0 (100%, which the driver normalizes to 1.0
+    while RUNNING). Returns (xml_element, xml_attribute, value) tuples."""
+    fields = []
+    program_state = xml_config["motion_state_robot_status_program_state"]
+    if program_state is not None:
+        xml_element, xml_attribute, _value_type = program_state
+        fields.append((xml_element, xml_attribute, 3))
+    speed_scaling = xml_config["motion_state_robot_status_speed_scaling"]
+    if speed_scaling is not None:
+        xml_element, xml_attribute, _value_type = speed_scaling
+        fields.append((xml_element, xml_attribute, 100.0))
+    return fields
 
 
 def create_rsi_xml_rob(
-    act_joint_pos, act_joint_vel, act_joint_torque, timeout_count, ipoc, xml_config
+    act_joint_pos,
+    act_joint_vel,
+    act_joint_torque,
+    act_joint_current,
+    timeout_count,
+    ipoc,
+    xml_config,
 ):
     root = ET.Element("Rob", {"TYPE": "KUKA"})
-    if xml_config["motion_state_cartesian_enabled"]:
-        ET.SubElement(
-            root,
-            xml_config["motion_state_cartesian_element"],
-            {attr: "0.0" for attr in xml_config["motion_state_cartesian_attributes"]},
-        )
 
-    _append_joint_signal_elements(
-        root, xml_config["motion_state_position_mappings"], act_joint_pos
+    joint_fields = _joint_fields(
+        xml_config, act_joint_pos, act_joint_vel, act_joint_torque, act_joint_current
     )
-    _append_joint_signal_elements(
-        root, xml_config["motion_state_velocity_mappings"], act_joint_vel
-    )
-    _append_joint_signal_elements(
-        root, xml_config["motion_state_torque_mappings"], act_joint_torque
-    )
+    gpio_element = xml_config["motion_state_gpio_element"]
+    gpio_attrs = xml_config["motion_state_gpio_attributes"]
+    custom_fields = _custom_fields(xml_config)
+
+    field_order = xml_config["motion_state_field_order"]
+    if field_order is None:
+        # Matches the SDK's own default grouping: CARTESIAN, CARTESIAN_SETPOINT, all JOINT
+        # fields, all GPIO, all CUSTOM (see BuildParseOrder()'s default branch).
+        field_order = []
+        if xml_config["motion_state_cartesian_enabled"]:
+            field_order.append(("CARTESIAN", 0))
+        if xml_config["motion_state_cartesian_setpoint_enabled"]:
+            field_order.append(("CARTESIAN_SETPOINT", 0))
+        field_order.extend(("JOINT", i) for i in range(len(joint_fields)))
+        field_order.extend(("GPIO", i) for i in range(len(gpio_attrs)))
+        field_order.extend(("CUSTOM", i) for i in range(len(custom_fields)))
+
+    pending_element = None
+    pending_attrs = {}
+
+    def _flush():
+        nonlocal pending_element, pending_attrs
+        if pending_element is not None:
+            ET.SubElement(root, pending_element, pending_attrs)
+            pending_element = None
+            pending_attrs = {}
+
+    # Adjacent JOINT/GPIO entries sharing an xml_element are grouped into one element, mirroring
+    # how the real driver's wire format packs multiple attributes under one SEND element.
+    for field_type, index in field_order:
+        if field_type == "JOINT":
+            xml_element, xml_attribute, value = joint_fields[index]
+            if pending_element is not None and xml_element != pending_element:
+                _flush()
+            pending_element = xml_element
+            pending_attrs[xml_attribute] = str(value)
+            continue
+        if field_type == "GPIO":
+            xml_attribute = gpio_attrs[index]
+            if pending_element is not None and gpio_element != pending_element:
+                _flush()
+            pending_element = gpio_element
+            pending_attrs[xml_attribute] = "0"
+            continue
+
+        _flush()
+
+        if field_type == "CARTESIAN":
+            ET.SubElement(
+                root,
+                xml_config["motion_state_cartesian_element"],
+                {attr: "0.0" for attr in xml_config["motion_state_cartesian_attributes"]},
+            )
+        elif field_type == "CARTESIAN_SETPOINT":
+            ET.SubElement(
+                root,
+                xml_config["motion_state_cartesian_setpoint_element"],
+                {
+                    attr: "0.0"
+                    for attr in xml_config["motion_state_cartesian_setpoint_attributes"]
+                },
+            )
+        elif field_type == "CUSTOM":
+            xml_element, xml_attribute, value = custom_fields[index]
+            ET.SubElement(root, xml_element, {xml_attribute: str(value)})
+
+    _flush()
 
     ET.SubElement(
         root,
@@ -418,6 +601,7 @@ class RSISimulator(Node):
     act_joint_pos = np.array([0, -90, 90, 0, 90, 0] + [0] * 6).astype(np.float64)
     act_joint_vel = np.zeros(12).astype(np.float64)
     act_joint_torque = np.zeros(12).astype(np.float64)
+    act_joint_current = np.zeros(12).astype(np.float64)
     initial_joint_pos = act_joint_pos.copy()
     des_joint_correction_absolute = np.zeros(12)
     timeout_count = 0
@@ -467,6 +651,7 @@ class RSISimulator(Node):
                 self.act_joint_pos,
                 self.act_joint_vel,
                 self.act_joint_torque,
+                self.act_joint_current,
                 self.timeout_count,
                 self.ipoc,
                 self.rsi_xml_config_,

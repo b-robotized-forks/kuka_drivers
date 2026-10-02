@@ -54,6 +54,12 @@ private:
     const YAML::Node & cartesian_node,
     kuka::external::control::kss::MotionStateXmlConfiguration & motion_state_xml) const;
 
+  // Cartesian setpoint (RSol) defaults to disabled (unlike cartesian/RIst, which defaults to
+  // enabled); the YAML block must set 'enabled: true' for it to be transmitted.
+  bool ParseCartesianSetpointMotionState(
+    const YAML::Node & cartesian_setpoint_node,
+    kuka::external::control::kss::MotionStateXmlConfiguration & motion_state_xml) const;
+
   bool ParseJointMotionState(
     const YAML::Node & joints_node, std::size_t joint_count,
     kuka::external::control::kss::MotionStateXmlConfiguration & motion_state_xml) const;
@@ -67,6 +73,14 @@ private:
   // configured on the KRC side (see hardware_interface_rsi_base.hpp's kRobotStatusSensorName).
   bool ParseRobotStatus(
     const YAML::Node & robot_status_node,
+    kuka::external::control::kss::MotionStateXmlConfiguration & motion_state_xml) const;
+
+  // Explicit incoming-message field order (CARTESIAN, CARTESIAN_SETPOINT, JOINT, GPIO, CUSTOM
+  // only -- DELAY/IPOC are always handled internally by the SDK and must not be included, same
+  // as the SDK itself enforces). Required whenever the robot's actual SEND element order can't be
+  // expressed by the SDK's default grouping (all joint fields, then all GPIO, then all custom).
+  bool ParseFieldOrder(
+    const YAML::Node & field_order_node,
     kuka::external::control::kss::MotionStateXmlConfiguration & motion_state_xml) const;
 
   bool AppendJointFields(
