@@ -48,6 +48,10 @@ def launch_setup(context, *args, **kwargs):
     kl_ros2_control_joints_macro = LaunchConfiguration("kl_ros2_control_joints_macro")
     mode = LaunchConfiguration("mode")
     use_gpio = LaunchConfiguration("use_gpio")
+    read_current = LaunchConfiguration("read_current")
+    read_robot_status = LaunchConfiguration("read_robot_status")
+    read_cartesian_pose = LaunchConfiguration("read_cartesian_pose")
+    read_cartesian_setpoint = LaunchConfiguration("read_cartesian_setpoint")
     driver_version = LaunchConfiguration("driver_version")
     client_ip = LaunchConfiguration("client_ip")
     client_port = LaunchConfiguration("client_port")
@@ -249,6 +253,18 @@ def launch_setup(context, *args, **kwargs):
         " ",
         "rsi_xml_config_file:=",
         rsi_xml_config_file,
+        " ",
+        "read_current:=",
+        read_current,
+        " ",
+        "read_robot_status:=",
+        read_robot_status,
+        " ",
+        "read_cartesian_pose:=",
+        read_cartesian_pose,
+        " ",
+        "read_cartesian_setpoint:=",
+        read_cartesian_setpoint,
     ]
 
     if use_external_axis_value:
@@ -434,6 +450,24 @@ def generate_launch_description():
     launch_arguments.append(DeclareLaunchArgument("mode", default_value="hardware"))
     launch_arguments.append(
         DeclareLaunchArgument("use_gpio", default_value="false", choices=["true", "false"])
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument("read_current", default_value="false", choices=["true", "false"])
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "read_robot_status", default_value="false", choices=["true", "false"]
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "read_cartesian_pose", default_value="false", choices=["true", "false"]
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "read_cartesian_setpoint", default_value="false", choices=["true", "false"]
+        )
     )
     launch_arguments.append(
         DeclareLaunchArgument(

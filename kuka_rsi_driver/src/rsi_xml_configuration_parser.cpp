@@ -102,6 +102,12 @@ bool RsiXmlConfigurationParser::ParseMotionState(
     return false;
   }
 
+  if (!ParseCartesianSetpointMotionState(
+        motion_state_node["cartesian_setpoint"], motion_state_xml))
+  {
+    return false;
+  }
+
   if (!ParseJointMotionState(motion_state_node["joints"], joint_count, motion_state_xml))
   {
     return false;
@@ -114,6 +120,11 @@ bool RsiXmlConfigurationParser::ParseMotionState(
   }
 
   if (!ParseRobotStatus(motion_state_node["robot_status"], motion_state_xml))
+  {
+    return false;
+  }
+
+  if (!ParseFieldOrder(motion_state_node["field_order"], motion_state_xml))
   {
     return false;
   }
@@ -195,6 +206,41 @@ bool RsiXmlConfigurationParser::ParseCartesianMotionState(
     for (std::size_t i = 0; i < attrs.size(); ++i)
     {
       motion_state_xml.cartesian.xml_attributes[i] = attrs[i].as<std::string>();
+    }
+  }
+
+  return true;
+}
+
+bool RsiXmlConfigurationParser::ParseCartesianSetpointMotionState(
+  const YAML::Node & cartesian_setpoint_node,
+  kuka::external::control::kss::MotionStateXmlConfiguration & motion_state_xml) const
+{
+  if (!cartesian_setpoint_node)
+  {
+    return true;
+  }
+
+  if (const YAML::Node enabled = cartesian_setpoint_node["enabled"])
+  {
+    motion_state_xml.cartesian_setpoint.enabled = enabled.as<bool>();
+  }
+
+  ParseXmlElement(cartesian_setpoint_node, motion_state_xml.cartesian_setpoint.xml_element);
+
+  if (const YAML::Node attrs = cartesian_setpoint_node["xml_attributes"])
+  {
+    if (attrs.size() != motion_state_xml.cartesian_setpoint.xml_attributes.size())
+    {
+      RCLCPP_ERROR(
+        logger_, "motion_state.cartesian_setpoint.xml_attributes has %zu entries; expected %zu.",
+        attrs.size(), motion_state_xml.cartesian_setpoint.xml_attributes.size());
+      return false;
+    }
+
+    for (std::size_t i = 0; i < attrs.size(); ++i)
+    {
+      motion_state_xml.cartesian_setpoint.xml_attributes[i] = attrs[i].as<std::string>();
     }
   }
 
@@ -327,6 +373,70 @@ bool RsiXmlConfigurationParser::ParseRobotStatus(
     field.xml_element = xml_element.as<std::string>();
     field.xml_attribute = xml_attribute.as<std::string>();
     motion_state_xml.custom_fields.push_back(std::move(field));
+  }
+
+  return true;
+}
+
+bool RsiXmlConfigurationParser::ParseFieldOrder(
+  const YAML::Node & field_order_node,
+  kuka::external::control::kss::MotionStateXmlConfiguration & motion_state_xml) const
+{
+  using namespace kuka::external::control::kss;  // NOLINT
+
+  if (!field_order_node)
+  {
+    return true;
+  }
+
+  for (const YAML::Node & entry_node : field_order_node)
+  {
+    const YAML::Node type_node = entry_node["field_type"];
+    if (!type_node)
+    {
+      RCLCPP_ERROR(logger_, "motion_state.field_order entries require a 'field_type'.");
+      return false;
+    }
+    const std::string type_str = type_node.as<std::string>();
+
+    MotionStateXmlOrderEntry entry;
+    if (type_str == "CARTESIAN")
+    {
+      entry.field_type = MotionStateXmlFieldType::CARTESIAN;
+    }
+    else if (type_str == "CARTESIAN_SETPOINT")
+    {
+      entry.field_type = MotionStateXmlFieldType::CARTESIAN_SETPOINT;
+    }
+    else if (type_str == "JOINT")
+    {
+      entry.field_type = MotionStateXmlFieldType::JOINT;
+    }
+    else if (type_str == "GPIO")
+    {
+      entry.field_type = MotionStateXmlFieldType::GPIO;
+    }
+    else if (type_str == "CUSTOM")
+    {
+      entry.field_type = MotionStateXmlFieldType::CUSTOM;
+    }
+    else
+    {
+      RCLCPP_ERROR(
+        logger_,
+        "motion_state.field_order has unsupported field_type '%s' (expected CARTESIAN, "
+        "CARTESIAN_SETPOINT, JOINT, GPIO, or CUSTOM; DELAY/IPOC are always handled internally "
+        "and must not be listed).",
+        type_str.c_str());
+      return false;
+    }
+
+    if (const YAML::Node index_node = entry_node["index"])
+    {
+      entry.index = index_node.as<std::size_t>();
+    }
+
+    motion_state_xml.field_order.push_back(entry);
   }
 
   return true;
