@@ -34,10 +34,13 @@ Notes
   `rsi_xml_config`.
 - Motion-state groups that use the default KRC element names are emitted using their KRC
   built-in `DEF_` shortcuts (`RIst` -> `DEF_RIst`, `RSol` -> `DEF_RSol`, `AIPos` -> `DEF_AIPos`,
-  `EIPos` -> `DEF_EIPos`, `MACur` -> `DEF_MACur`, `MECur` -> `DEF_MECur`). Groups that use custom
+  `EIPos` -> `DEF_EIPos`, `MACur` -> `DEF_MACur`, `MECur` -> `DEF_MECur`, `ASPos` -> `DEF_ASPos`,
+  `ESPos` -> `DEF_ESPos`). Groups that use custom
   element names are expanded into individual, explicitly-indexed `<ELEMENT>` entries.
 - `motion_state.joints.currents` (motor current, e.g. `MACur`/`MECur`) is supported the same way
   as `velocities`/`torques`.
+- `motion_state.joints.setpoint_positions` (axis-specific setpoint position, e.g. `ASPos`/`ESPos`)
+  is supported the same way as `currents`.
 - `motion_state.cartesian_setpoint` (setpoint pose, e.g. `RSol`) is supported the same way as
   `cartesian`, but is disabled by default and must set `enabled: true`.
 - `motion_state.robot_status` (`program_state`/`speed_scaling`, e.g. `ProgStatus.R`/`OvPro.R`) is
@@ -45,7 +48,8 @@ Notes
 - `motion_state.field_order` is supported: if given, it determines the exact SEND emission order
   (must match what you configure for the driver's own `rsi_xml_config_file` YAML, since the two
   are independent). If omitted, the default order matches the SDK's own default: CARTESIAN,
-  CARTESIAN_SETPOINT, all JOINT fields (positions, then velocities, then torques, then currents),
+  CARTESIAN_SETPOINT, all JOINT fields (positions, then velocities, then torques, then currents,
+  then setpoint positions),
   all GPIO fields, all CUSTOM fields.
 - Delay is always generated as KRC built-in `DEF_Delay` (it is not configurable in YAML) and
   is always placed after all configurable SEND fields.
@@ -68,6 +72,8 @@ _DEFAULT_POSITIONS_ELEMENT = "AIPos"
 _DEFAULT_EXT_JOINT_ELEMENT = "EIPos"
 _DEFAULT_CURRENT_ELEMENT = "MACur"
 _DEFAULT_EXT_CURRENT_ELEMENT = "MECur"
+_DEFAULT_SETPOINT_POSITION_ELEMENT = "ASPos"
+_DEFAULT_EXT_SETPOINT_POSITION_ELEMENT = "ESPos"
 _DEFAULT_JOINT_CMD_ELEMENT = "AK"
 _DEFAULT_EXT_JOINT_CMD_ELEMENT = "EK"
 _DEFAULT_VELOCITY_CMD_ELEMENT = "VK"
@@ -86,6 +92,8 @@ _DEF_SHORTCUTS = {
     _DEFAULT_EXT_JOINT_ELEMENT: "DEF_EIPos",
     _DEFAULT_CURRENT_ELEMENT: "DEF_MACur",
     _DEFAULT_EXT_CURRENT_ELEMENT: "DEF_MECur",
+    _DEFAULT_SETPOINT_POSITION_ELEMENT: "DEF_ASPos",
+    _DEFAULT_EXT_SETPOINT_POSITION_ELEMENT: "DEF_ESPos",
 }
 
 # field_order.field_type values the driver's parser (and this generator) accept.
@@ -264,13 +272,20 @@ def build_krc_xml(
     )
     torques_cfg = _extract_motion_state_signal_entries(joints_cfg, "torques", len(positions_cfg))
     currents_cfg = _extract_motion_state_signal_entries(joints_cfg, "currents", len(positions_cfg))
+    setpoint_positions_cfg = _extract_motion_state_signal_entries(
+        joints_cfg, "setpoint_positions", len(positions_cfg)
+    )
     _validate_joint_entries(velocities_cfg, "motion_state.joints.velocities")
     _validate_joint_entries(torques_cfg, "motion_state.joints.torques")
     _validate_joint_entries(currents_cfg, "motion_state.joints.currents")
+    _validate_joint_entries(setpoint_positions_cfg, "motion_state.joints.setpoint_positions")
 
     # Matches MotionStateXmlConfiguration::joint_fields declaration order in
-    # rsi_xml_configuration_parser.cpp: positions, then velocities, then torques, then currents.
-    joint_fields = positions_cfg + velocities_cfg + torques_cfg + currents_cfg
+    # rsi_xml_configuration_parser.cpp: positions, then velocities, then torques, then currents,
+    # then setpoint positions.
+    joint_fields = (
+        positions_cfg + velocities_cfg + torques_cfg + currents_cfg + setpoint_positions_cfg
+    )
 
     ext_positions_send = [
         j for j in positions_cfg if j.get("xml_element", "") == _DEFAULT_EXT_JOINT_ELEMENT
