@@ -277,8 +277,10 @@ private:
     "position.x",    "position.y",    "position.z",   "orientation.x",
     "orientation.y", "orientation.z", "orientation.w"};
 
-  // Converts KUKA's X/Y/Z (metres) + A/B/C Euler angles (radians, intrinsic Z-Y'-X'') into the
-  // 7-value [x, y, z, qx, qy, qz, qw] layout kCartesianPoseInterfaceNames expects.
+  // Converts KUKA's X/Y/Z (millimetres, as parsed by the SDK) + A/B/C Euler angles (radians,
+  // intrinsic Z-Y'-X'') into the 7-value [x, y, z, qx, qy, qz, qw] layout
+  // kCartesianPoseInterfaceNames expects, with x/y/z in metres (ROS REP 103).
+  static constexpr double kMillimetersToMeters = 1e-3;
   KUKA_RSI_DRIVER_LOCAL static std::array<double, 7> CartesianPoseToPositionQuaternion(
     const std::vector<double> & xyzabc);
 
