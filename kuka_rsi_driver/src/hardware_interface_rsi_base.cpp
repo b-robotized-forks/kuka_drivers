@@ -43,7 +43,8 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.torque_states.resize(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
-  interface_data_.current_states.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
+  interface_data_.current_states.resize(
+    info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.robot_status_states.resize(2, std::numeric_limits<double>::quiet_NaN());
   interface_data_.cartesian_pose_states.resize(
     kCartesianPoseInterfaceNames.size(), std::numeric_limits<double>::quiet_NaN());
@@ -120,7 +121,8 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
   // equivalent "configured in XML" check/warning is needed for cartesian_pose -- unlike setpoint
   // (RSol), which defaults to disabled and must be explicitly enabled.
   const bool cartesian_setpoint_configured_in_xml =
-    motion_state_xml_config_.has_value() && motion_state_xml_config_.value().cartesian_setpoint.enabled;
+    motion_state_xml_config_.has_value() &&
+    motion_state_xml_config_.value().cartesian_setpoint.enabled;
 
   if (control_signal_xml_config_.has_value())
   {
@@ -234,8 +236,8 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
   // Optional: "cartesian_pose" (RIst) / "cartesian_setpoint" (RSol) sensor components, each with
   // the 7 pose_broadcaster-compatible state interfaces (kCartesianPoseInterfaceNames).
   if (!DetectPoseSensor(
-        std::string(kCartesianPoseSensorName), optional_interface_flags_.has_cartesian_pose_state_interface,
-        cartesian_pose_state_names_))
+        std::string(kCartesianPoseSensorName),
+        optional_interface_flags_.has_cartesian_pose_state_interface, cartesian_pose_state_names_))
   {
     return CallbackReturn::ERROR;
   }
@@ -696,10 +698,17 @@ std::array<double, 7> KukaRSIHardwareInterfaceBase::CartesianPoseToPositionQuate
   // by B, then about the new X'' by C. Composing AngleAxis rotations in this order (applied
   // right-to-left to a vector) reproduces exactly that intrinsic Z-Y'-X'' rotation.
   const Eigen::Quaterniond q = Eigen::AngleAxisd(xyzabc[3], Eigen::Vector3d::UnitZ()) *
-                                Eigen::AngleAxisd(xyzabc[4], Eigen::Vector3d::UnitY()) *
-                                Eigen::AngleAxisd(xyzabc[5], Eigen::Vector3d::UnitX());
+                               Eigen::AngleAxisd(xyzabc[4], Eigen::Vector3d::UnitY()) *
+                               Eigen::AngleAxisd(xyzabc[5], Eigen::Vector3d::UnitX());
 
-  return {xyzabc[0], xyzabc[1], xyzabc[2], q.x(), q.y(), q.z(), q.w()};
+  return {
+    xyzabc[0] * kMillimetersToMeters,
+    xyzabc[1] * kMillimetersToMeters,
+    xyzabc[2] * kMillimetersToMeters,
+    q.x(),
+    q.y(),
+    q.z(),
+    q.w()};
 }
 
 bool KukaRSIHardwareInterfaceBase::DetectPoseSensor(
