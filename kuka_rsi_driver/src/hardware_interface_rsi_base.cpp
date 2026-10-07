@@ -45,6 +45,8 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.current_states.resize(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
+  interface_data_.setpoint_position_states.resize(
+    info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.robot_status_states.resize(2, std::numeric_limits<double>::quiet_NaN());
   interface_data_.cartesian_pose_states.resize(
     kCartesianPoseInterfaceNames.size(), std::numeric_limits<double>::quiet_NaN());
@@ -67,6 +69,12 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
       info_.joints[0].state_interfaces.cbegin(), info_.joints[0].state_interfaces.cend(),
       [](const hardware_interface::InterfaceInfo & interface)
       { return interface.name == kCurrentInterfaceName; });
+  optional_interface_flags_.has_setpoint_position_state_interface =
+    !info_.joints.empty() &&
+    std::any_of(
+      info_.joints[0].state_interfaces.cbegin(), info_.joints[0].state_interfaces.cend(),
+      [](const hardware_interface::InterfaceInfo & interface)
+      { return interface.name == kSetpointPositionInterfaceName; });
 
   for (const auto & joint : info_.joints)
   {
@@ -95,6 +103,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
   // TODO(Sachin): Check here
   // Derive optional interface flags from the XML config.
   bool motor_current_configured_in_xml = false;
+  bool setpoint_position_configured_in_xml = false;
   // Only robot_status currently uses custom_fields, so its presence (2 entries: program_state,
   // speed_scaling) is a sufficient check; revisit if another feature also uses custom_fields.
   bool robot_status_configured_in_xml = false;
@@ -114,6 +123,10 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
       joint_fields.cbegin(), joint_fields.cend(),
       [](const kuka::external::control::kss::MotionStateJointFieldConfiguration & field)
       { return field.signal_type == MST::CURRENT; });
+    setpoint_position_configured_in_xml = std::any_of(
+      joint_fields.cbegin(), joint_fields.cend(),
+      [](const kuka::external::control::kss::MotionStateJointFieldConfiguration & field)
+      { return field.signal_type == MST::SETPOINT_POSITION; });
     robot_status_configured_in_xml = motion_state_xml_config_.value().custom_fields.size() >= 2;
   }
   // Cartesian actual pose (RIst) is enabled by default at the SDK level even without a custom
@@ -160,6 +173,18 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
       "Motor current state interfaces are declared in the URDF, but motion_state.joints.currents "
       "is not configured in RSI XML. Motor current state values will remain at their default "
       "(NaN) and will not be updated with actual measurements from the robot.");
+  }
+
+  if (
+    optional_interface_flags_.has_setpoint_position_state_interface &&
+    !setpoint_position_configured_in_xml)
+  {
+    RCLCPP_WARN(
+      logger_,
+      "Setpoint position state interfaces are declared in the URDF, but "
+      "motion_state.joints.setpoint_positions is not configured in RSI XML. Setpoint position "
+      "state values will remain at their default (NaN) and will not be updated with values from "
+      "the robot.");
   }
 
   if (optional_interface_flags_.has_robot_status_state_interface && !robot_status_configured_in_xml)
@@ -326,6 +351,16 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     {
       joint_current_state_names_[i] =
         info_.joints[i].name + "/" + std::string(kCurrentInterfaceName);
+    }
+  }
+
+  if (optional_interface_flags_.has_setpoint_position_state_interface)
+  {
+    joint_setpoint_position_state_names_.resize(info_.joints.size());
+    for (size_t i = 0; i < info_.joints.size(); i++)
+    {
+      joint_setpoint_position_state_names_[i] =
+        info_.joints[i].name + "/" + std::string(kSetpointPositionInterfaceName);
     }
   }
 
@@ -591,6 +626,12 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
       const auto & currents = req_message.GetMeasuredCurrents();
       std::copy(currents.cbegin(), currents.cend(), interface_data_.current_states.begin());
     }
+    if (optional_interface_flags_.has_setpoint_position_state_interface)
+    {
+      const auto & setpoints = req_message.GetMeasuredSetpointPositions();
+      std::copy(
+        setpoints.cbegin(), setpoints.cend(), interface_data_.setpoint_position_states.begin());
+    }
     if (optional_interface_flags_.has_robot_status_state_interface)
     {
       const auto & custom_values = req_message.GetMeasuredCustomValues();
@@ -652,6 +693,14 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
       for (size_t i = 0; i < info_.joints.size(); i++)
       {
         set_state(joint_current_state_names_[i], interface_data_.current_states[i]);
+      }
+    }
+    if (optional_interface_flags_.has_setpoint_position_state_interface)
+    {
+      for (size_t i = 0; i < info_.joints.size(); i++)
+      {
+        set_state(
+          joint_setpoint_position_state_names_[i], interface_data_.setpoint_position_states[i]);
       }
     }
     if (optional_interface_flags_.has_robot_status_state_interface)
@@ -775,6 +824,10 @@ bool KukaRSIHardwareInterfaceBase::CheckJointStateInterfaces(
   if (optional_interface_flags_.has_current_state_interface)
   {
     expected_interfaces.push_back(std::string(kCurrentInterfaceName));
+  }
+  if (optional_interface_flags_.has_setpoint_position_state_interface)
+  {
+    expected_interfaces.push_back(std::string(kSetpointPositionInterfaceName));
   }
   return kuka_drivers_core::urdf_validator::ValidateJointStateInterfaces(
     joint, expected_interfaces, logger_);

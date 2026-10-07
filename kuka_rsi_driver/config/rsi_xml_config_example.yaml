@@ -59,6 +59,15 @@ rsi_xml_config:
       #     xml_attribute: "A1"
       #   # ... repeat for each joint
 
+    # Optional per-joint axis-specific setpoint position mapping (KRC built-in: DEF_ASPos for
+    # internal axes, DEF_ESPos for external axes). If provided, this must contain one entry per
+    # joint. Exported as the joint "position_setpoint" state interface.
+      # setpoint_positions:
+      #   - joint_identifier: "joint_1"
+      #     xml_element: "ASPos"
+      #     xml_attribute: "A1"
+      #   # ... repeat for each joint
+
     # Optional per-joint torque mapping.
     # If provided, this must also contain one entry per joint.
       # torques:

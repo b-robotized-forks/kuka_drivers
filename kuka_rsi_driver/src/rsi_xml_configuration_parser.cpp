@@ -302,6 +302,13 @@ bool RsiXmlConfigurationParser::ParseJointMotionState(
     return false;
   }
 
+  if (!AppendOptionalJointFields(
+        joints_node["setpoint_positions"], MotionStateSignalType::SETPOINT_POSITION,
+        "joints.setpoint_positions", joint_count, motion_state_xml.joint_fields))
+  {
+    return false;
+  }
+
   return true;
 }
 

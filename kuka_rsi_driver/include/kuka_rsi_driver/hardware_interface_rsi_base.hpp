@@ -122,6 +122,7 @@ protected:
     std::vector<double> torque_states;
     std::vector<double> gpio_states;
     std::vector<double> current_states;
+    std::vector<double> setpoint_position_states;
     // [0] = program_state (raw $PRO_STATE code), [1] = speed_scaling_factor (0-1).
     std::vector<double> robot_status_states;
     // Both, when present, hold 7 values matching semantic_components::PoseSensor's layout:
@@ -140,6 +141,7 @@ protected:
     bool has_velocity_state_interface = false;
     bool has_torque_state_interface = false;
     bool has_current_state_interface = false;
+    bool has_setpoint_position_state_interface = false;
     bool has_robot_status_state_interface = false;
     bool has_cartesian_pose_state_interface = false;
     bool has_cartesian_setpoint_state_interface = false;
@@ -222,6 +224,7 @@ protected:
   std::vector<std::string> joint_velocity_command_names_;
   std::vector<std::string> joint_effort_command_names_;
   std::vector<std::string> joint_current_state_names_;
+  std::vector<std::string> joint_setpoint_position_state_names_;
   // [0] = program_state, [1] = speed_scaling_factor. Only populated when
   // has_robot_status_state_interface is true (opt-in via a "robot_status" URDF sensor).
   std::vector<std::string> robot_status_state_names_;
@@ -251,6 +254,8 @@ private:
   static constexpr std::string_view kRsiXmlConfigFileParam = "rsi_xml_config_file";
   // Opt-in per joint via the URDF; unlike position/velocity/effort this is not mandatory.
   static constexpr std::string_view kCurrentInterfaceName = "current";
+  // Axis-specific setpoint position (ASPos/ESPos), opt-in per joint via the URDF like "current".
+  static constexpr std::string_view kSetpointPositionInterfaceName = "position_setpoint";
 
   // Opt-in via a "robot_status" URDF sensor component (program_state, speed_scaling_factor).
   // Requires the robot's RSI config to transmit the custom RSIVisual "Status"/"OV_PRO" object
