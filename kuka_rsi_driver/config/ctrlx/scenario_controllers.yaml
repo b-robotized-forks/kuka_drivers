@@ -1,0 +1,42 @@
+# Controller types for spawning on a b»Controlled Box (ctrlX CORE) controller manager.
+#
+# Used by scenario_eki_rsi.launch.xml. The spawner reads the controller *type* from this local
+# file and passes only the file *name* to the controller manager, which loads the parameters
+# from its own scenario_controllers.yaml in the ctrlX active configuration
+# (/var/snap/rexroth-automationcore/common/solutions/activeConfiguration/b-controlled-box/).
+# Controller parameters that the ctrlX file doesn't provide (e.g. the joint_trajectory_controller
+# joints) are passed by the launch file with --controller-ros-args.
+
+joint_state_broadcaster:
+  ros__parameters:
+    type: joint_state_broadcaster/JointStateBroadcaster
+
+joint_trajectory_controller:
+  ros__parameters:
+    type: joint_trajectory_controller/JointTrajectoryController
+
+event_broadcaster:
+  ros__parameters:
+    type: kuka_controllers/EventBroadcaster
+
+control_mode_handler:
+  ros__parameters:
+    type: kuka_controllers/ControlModeHandler
+
+kss_message_handler:
+  ros__parameters:
+    type: kuka_controllers/KssMessageHandler
+
+# Optional broadcasters, spawned by scenario_eki_rsi.launch.xml with read_robot_status /
+# read_cartesian_pose / read_cartesian_setpoint
+robot_status_broadcaster:
+  ros__parameters:
+    type: kuka_controllers/RobotStatusBroadcaster
+
+cartesian_pose_broadcaster:
+  ros__parameters:
+    type: pose_broadcaster/PoseBroadcaster
+
+cartesian_setpoint_broadcaster:
+  ros__parameters:
+    type: pose_broadcaster/PoseBroadcaster
