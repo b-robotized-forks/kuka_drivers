@@ -78,7 +78,7 @@ RSI XML config YAML uploaded to the ctrlX (ctrlx_config_dir), selected by file n
        description="Directory ON THE CTRLX containing rsi_xml_config (the hardware runs there and reads the file)."/>
   <arg name="read_robot_status"
        default="false"
-       description="Add the robot_status sensor (program state, speed scaling) and spawn robot_status_broadcaster - needs ProgStatus/OvPro in the YAML."/>
+       description="Add the robot_status sensor (program state, speed scaling) - needs ProgStatus/OvPro in the YAML."/>
   <arg name="read_cartesian_pose"
        default="false"
        description="Add the cartesian_pose sensor (actual TCP pose, RIst) and spawn cartesian_pose_broadcaster."/>
@@ -140,11 +140,13 @@ RSI XML config YAML uploaded to the ctrlX (ctrlx_config_dir), selected by file n
         args="joint_trajectory_controller -c /$(var cm) -p scenario_controllers.yaml --inactive
               --controller-ros-args='-p joints:=[joint_1,joint_2,joint_3,joint_4,joint_5,joint_6] -p command_interfaces:=[position] -p state_interfaces:=[position] -p allow_nonzero_velocity_at_trajectory_end:=true'"/>
 
-  <!-- Optional broadcasters for the sensors added with read_*. They only read state interfaces, so
-       they are activated directly. pose_name must match the sensor names in the URDF. -->
-  <node pkg="controller_manager" exec="spawner" name="robot_status_broadcaster_spawner"
-        cwd="$(var controllers_dir)" output="screen" if="$(var read_robot_status)"
-        args="robot_status_broadcaster -c /$(var cm) -p scenario_controllers.yaml --inactive"/>
+  <!-- Optional broadcasters for the sensors added with read_*, spawned inactive: activate them with
+       switch_controllers after the robot manager has activated the hardware. pose_name must match
+       the sensor names in the URDF. -->
+  <!-- robot_status_broadcaster (kuka_controllers/RobotStatusBroadcaster) is not in the ctrlX snap
+       yet. Once it is, enable its type in scenario_controllers.yaml and add a spawner like the ones
+       below: args "robot_status_broadcaster -c /CM -p scenario_controllers.yaml" plus inactive,
+       if="$(var read_robot_status)". -->
   <node pkg="controller_manager" exec="spawner" name="cartesian_pose_broadcaster_spawner"
         cwd="$(var controllers_dir)" output="screen" if="$(var read_cartesian_pose)"
         args="cartesian_pose_broadcaster -c /$(var cm) -p scenario_controllers.yaml --inactive
