@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+
+import yaml
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import (
@@ -23,6 +26,22 @@ from launch.substitutions import (
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
+
+def rsi_xml_config_xacro_arg(context, path, inline):
+    """Return the xacro argument for rsi_xml_config_file.
+
+    With inline=true, the YAML file at path is read on this machine and passed as compact JSON
+    (a YAML flow mapping) instead of the path. The driver parses content starting with '{' directly,
+    so the hardware doesn't need the file, e.g. when it runs on a ctrlX controller manager.
+    """
+    value = path.perform(context)
+    if value and inline.perform(context) == "true":
+        with open(value, encoding="utf-8") as config_file:
+            value = json.dumps(yaml.safe_load(config_file), separators=(",", ":"))
+        if "'" in value:
+            raise RuntimeError(f"RSI XML config '{path.perform(context)}' must not contain \"'\".")
+    # Quoted as one token: the command is split like a shell command line
+    return f"rsi_xml_config_file:='{value}'"
 
 def launch_setup(context, *args, **kwargs):
     robot_model = LaunchConfiguration("robot_model")
@@ -42,6 +61,15 @@ def launch_setup(context, *args, **kwargs):
     yaw = LaunchConfiguration("yaw")
     roundtrip_time = LaunchConfiguration("roundtrip_time")
     verify_robot_model = LaunchConfiguration("verify_robot_model")
+    rsi_xml_config_file = LaunchConfiguration("rsi_xml_config_file")
+    inline_rsi_xml_config = LaunchConfiguration("inline_rsi_xml_config")
+    read_robot_status = LaunchConfiguration("read_robot_status")
+    read_cartesian_pose = LaunchConfiguration("read_cartesian_pose")
+    read_cartesian_setpoint = LaunchConfiguration("read_cartesian_setpoint")
+    is_async = LaunchConfiguration("is_async")
+    async_scheduling_policy = LaunchConfiguration("async_scheduling_policy")
+    async_thread_priority = LaunchConfiguration("async_thread_priority")
+    async_affinity = LaunchConfiguration("async_affinity")
     ns = LaunchConfiguration("namespace")
     
     if ns.perform(context) == "":
@@ -109,6 +137,29 @@ def launch_setup(context, *args, **kwargs):
             " ",
             "verify_robot_model:=",
             verify_robot_model,
+            " ",
+            rsi_xml_config_xacro_arg(context, rsi_xml_config_file, inline_rsi_xml_config),
+            " ",
+            "read_robot_status:=",
+            read_robot_status,
+            " ",
+            "read_cartesian_pose:=",
+            read_cartesian_pose,
+            " ",
+            "read_cartesian_setpoint:=",
+            read_cartesian_setpoint,
+            " ",
+            "is_async:=",
+            is_async,
+            " ",
+            "async_scheduling_policy:=",
+            async_scheduling_policy,
+            " ",
+            "async_thread_priority:=",
+            async_thread_priority,
+            " ",
+            "async_affinity:=",
+            async_affinity,
         ],
         on_stderr="capture",
     )
@@ -157,6 +208,76 @@ def generate_launch_description():
     launch_arguments.append(
         DeclareLaunchArgument(
             "verify_robot_model", default_value="true", choices=["true", "false"]
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "rsi_xml_config_file",
+            default_value="",
+            description=(
+                "Absolute path to the RSI XML config YAML, as seen by the machine running the "
+                "hardware (on a ctrlX: a path on the ctrlX). Empty = driver defaults."
+            ),
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "inline_rsi_xml_config",
+            default_value="false",
+            choices=["true", "false"],
+            description=(
+                "Read rsi_xml_config_file on this machine and pass its content in the robot "
+                "description instead of the path. Needed when the hardware can't read files from "
+                "this machine (ctrlX controller manager)."
+            ),
+        )
+    )
+    for read_arg, what in (
+        ("read_robot_status", "robot_status sensor (program state, speed scaling)"),
+        ("read_cartesian_pose", "cartesian_pose sensor (actual TCP pose, RIst)"),
+        ("read_cartesian_setpoint", "cartesian_setpoint sensor (setpoint TCP pose, RSol)"),
+    ):
+        launch_arguments.append(
+            DeclareLaunchArgument(
+                read_arg,
+                default_value="false",
+                choices=["true", "false"],
+                description=f"Add the {what} to the robot description.",
+            )
+        )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "is_async",
+            default_value="false",
+            choices=["true", "false"],
+            description="Run the hardware component asynchronously to the controller manager loop.",
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "async_scheduling_policy",
+            default_value="detached",
+            description=(
+                "Scheduling policy of the async hardware thread (only used with is_async:=true): "
+                "'synchronized' or 'detached' in ros2_control, 'slave' on the ctrlX (b_controlled_box)."
+            ),
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "async_thread_priority",
+            default_value="69",
+            description="Priority of the async hardware thread (only used with is_async:=true).",
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "async_affinity",
+            default_value="[]",
+            description=(
+                "CPU cores for the async hardware thread, e.g. '[2,3]' without spaces "
+                "(only used with is_async:=true). Empty list = no pinning."
+            ),
         )
     )
 
