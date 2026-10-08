@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Copyright 2026 b»robotized Group
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+
+<!--
+Starts the PC side of a KUKA RSI driver (eki_rsi) whose controller manager runs on a
+b»Controlled Box (ctrlX CORE):
+  1. publishes the robot description - the ctrlX controller manager loads the hardware from it
+  2. spawns the controllers (inactive) on the ctrlX controller manager
+  3. starts the robot manager lifecycle node
+
+Activate afterwards (pendant in EXT mode, no program selected, ctrlX in OPERATIONAL):
+  ros2 lifecycle set /robot_manager configure
+  ros2 lifecycle set /robot_manager activate
+
+Example:
+  ros2 launch kuka_rsi_driver scenario_eki_rsi.launch.xml \
+    robot_family:=quantec robot_model:=kr210_r3100_2 controller_ip:=172.31.1.178
+
+Hardware scheduled as slave on the ctrlX (async):
+  ros2 launch kuka_rsi_driver scenario_eki_rsi.launch.xml \
+    robot_family:=quantec robot_model:=kr210_r3100_2 controller_ip:=172.31.1.178 is_async:=true
+
+RSI XML config YAML uploaded to the ctrlX (ctrlx_config_dir), selected by file name:
+  ros2 launch kuka_rsi_driver scenario_eki_rsi.launch.xml \
+    robot_family:=quantec robot_model:=kr210_r3100_2 controller_ip:=172.31.1.178 \
+    rsi_xml_config:=b_ctrldbox_rsi_xml_config.yaml
+-->
+
+<launch>
+
+  <!-- ── Robot ─────────────────────────────────────────────────────────── -->
+  <arg name="robot_family"
+       description="Robot family of the robot description package (kuka_ROBOT_FAMILY_support), e.g. quantec."/>
+  <arg name="robot_model"
+       description="Robot model (urdf/ROBOT_MODEL.urdf.xacro), e.g. kr210_r3100_2. Also the name of the hardware component."/>
+  <arg name="verify_robot_model"
+       default="false"
+       description="Check via EKI that the robot model reported by the KUKA controller matches robot_model."/>
+
+  <!-- ── Network ───────────────────────────────────────────────────────── -->
+  <arg name="controller_ip"
+       description="KLI IP address of the KUKA controller - the EKI server the hardware on the ctrlX connects to (TCP 54600)."/>
+  <arg name="client_ip"
+       default="10.23.23.28"
+       description="IP of the ctrlX on the RSI network - must match IP_NUMBER in the ethernet config on the KUKA."/>
+  <arg name="client_port"
+       default="28283"
+       description="UDP port for RSI - must match PORT in the ethernet config on the KUKA."/>
+
+  <!-- ── b»Controlled Box ──────────────────────────────────────────────── -->
+  <arg name="controller_manager_name"
+       default="b_controlled_box_cm"
+       description="Name of the controller manager running on the ctrlX."/>
+  <arg name="controllers_dir"
+       default="$(find-pkg-share kuka_rsi_driver)/config/ctrlx"
+       description="Local directory containing scenario_controllers.yaml with the controller types (see that file)."/>
+
+  <!-- ── RSI message layout ────────────────────────────────────────────── -->
+  <arg name="rsi_xml_config"
+       default=""
+       description="File name of the RSI XML config YAML uploaded to ctrlx_config_dir on the ctrlX, e.g. b_ctrldbox_rsi_xml_config.yaml. Empty = driver defaults: joint positions and Cartesian pose only."/>
+  <arg name="ctrlx_config_dir"
+       default="/var/snap/rexroth-automationcore/common/solutions/activeConfiguration/b-controlled-box"
+       description="Directory ON THE CTRLX containing rsi_xml_config (the hardware runs there and reads the file)."/>
+  <arg name="read_robot_status"
+       default="false"
+       description="Add the robot_status sensor (program state, speed scaling) and spawn robot_status_broadcaster - needs ProgStatus/OvPro in the YAML."/>
+  <arg name="read_cartesian_pose"
+       default="false"
+       description="Add the cartesian_pose sensor (actual TCP pose, RIst) and spawn cartesian_pose_broadcaster."/>
+  <arg name="read_cartesian_setpoint"
+       default="false"
+       description="Add the cartesian_setpoint sensor (setpoint TCP pose, RSol) and spawn cartesian_setpoint_broadcaster - needs cartesian_setpoint.enabled in the YAML."/>
+
+  <!-- ── Hardware scheduling ───────────────────────────────────────────── -->
+  <arg name="is_async"
+       default="false"
+       description="Run the hardware component asynchronously to the controller manager loop. true = use async_scheduling_policy (slave on the ctrlX)."/>
+  <arg name="async_scheduling_policy"
+       default="slave"
+       description="Scheduling policy of the async hardware thread (only used with is_async:=true). slave is specific to the ctrlX; ros2_control itself knows synchronized and detached."/>
+  <arg name="async_thread_priority"
+       default="69"
+       description="Priority of the async hardware thread (only used with is_async:=true)."/>
+  <arg name="async_affinity"
+       default="[]"
+       description="CPU cores of the async hardware thread without spaces, e.g. [2,3] (only used with is_async:=true). [] = no pinning."/>
+
+  <let name="cm" value="$(var controller_manager_name)"/>
+  <!-- Full path on the ctrlX, or empty (driver defaults) if no file name is given -->
+  <let name="rsi_xml_config_path"
+       value="$(eval &quot;'$(var ctrlx_config_dir)/$(var rsi_xml_config)' if '$(var rsi_xml_config)' else ''&quot;)"/>
+
+  <!-- 1. Robot description: the ctrlX controller manager subscribes to /robot_description -->
+  <include file="$(find-pkg-share kuka_rsi_driver)/launch/publish_description.launch.py">
+    <arg name="robot_family" value="$(var robot_family)"/>
+    <arg name="robot_model" value="$(var robot_model)"/>
+    <arg name="driver_version" value="eki_rsi"/>
+    <arg name="controller_ip" value="$(var controller_ip)"/>
+    <arg name="client_ip" value="$(var client_ip)"/>
+    <arg name="client_port" value="$(var client_port)"/>
+    <arg name="use_gpio" value="false"/>
+    <arg name="verify_robot_model" value="$(var verify_robot_model)"/>
+    <arg name="rsi_xml_config_file" value="$(var rsi_xml_config_path)"/>
+    <arg name="read_robot_status" value="$(var read_robot_status)"/>
+    <arg name="read_cartesian_pose" value="$(var read_cartesian_pose)"/>
+    <arg name="read_cartesian_setpoint" value="$(var read_cartesian_setpoint)"/>
+    <arg name="is_async" value="$(var is_async)"/>
+    <arg name="async_scheduling_policy" value="$(var async_scheduling_policy)"/>
+    <arg name="async_thread_priority" value="$(var async_thread_priority)"/>
+    <arg name="async_affinity" value="$(var async_affinity)"/>
+  </include>
+
+  <!-- 2. Controllers, spawned inactive - the robot manager activates them.
+       The spawners wait until the ctrlX controller manager has loaded the robot description. -->
+  <node pkg="controller_manager" exec="spawner" name="configuration_controllers_spawner"
+        cwd="$(var controllers_dir)" output="screen"
+        args="joint_state_broadcaster event_broadcaster control_mode_handler kss_message_handler
+              -c /$(var cm) -p scenario_controllers.yaml --inactive"/>
+
+  <!-- The ctrlX scenario file has no joint_trajectory_controller section, so its parameters are
+       passed directly to the controller node (6 robot axes, no namespace/prefix). The joint list is
+       written out on purpose: a launch substitution inside the quoted argument breaks the quoting. -->
+  <node pkg="controller_manager" exec="spawner" name="joint_trajectory_controller_spawner"
+        cwd="$(var controllers_dir)" output="screen"
+        args="joint_trajectory_controller -c /$(var cm) -p scenario_controllers.yaml --inactive
+              --controller-ros-args='-p joints:=[joint_1,joint_2,joint_3,joint_4,joint_5,joint_6] -p command_interfaces:=[position] -p state_interfaces:=[position] -p allow_nonzero_velocity_at_trajectory_end:=true'"/>
+
+  <!-- Optional broadcasters for the sensors added with read_*. They only read state interfaces, so
+       they are activated directly. pose_name must match the sensor names in the URDF. -->
+  <node pkg="controller_manager" exec="spawner" name="robot_status_broadcaster_spawner"
+        cwd="$(var controllers_dir)" output="screen" if="$(var read_robot_status)"
+        args="robot_status_broadcaster -c /$(var cm) -p scenario_controllers.yaml --inactive"/>
+  <node pkg="controller_manager" exec="spawner" name="cartesian_pose_broadcaster_spawner"
+        cwd="$(var controllers_dir)" output="screen" if="$(var read_cartesian_pose)"
+        args="cartesian_pose_broadcaster -c /$(var cm) -p scenario_controllers.yaml --inactive
+              --controller-ros-args='-p pose_name:=cartesian_pose -p frame_id:=base_link'"/>
+  <node pkg="controller_manager" exec="spawner" name="cartesian_setpoint_broadcaster_spawner"
+        cwd="$(var controllers_dir)" output="screen" if="$(var read_cartesian_setpoint)"
+        args="cartesian_setpoint_broadcaster -c /$(var cm) -p scenario_controllers.yaml --inactive
+              --controller-ros-args='-p pose_name:=cartesian_setpoint -p frame_id:=base_link'"/>
+
+  <!-- 3. Robot manager (EKI). The remap points its update_rate client to the ctrlX controller
+       manager (the client name is not derived from controller_manager_name). -->
+  <node pkg="kuka_rsi_driver" exec="robot_manager_node_extended" name="robot_manager" output="screen">
+    <param from="$(find-pkg-share kuka_rsi_driver)/config/driver_config.yaml"/>
+    <param name="robot_models" value="$(var robot_model)" value-sep=","/>
+    <param name="controller_manager_name" value="$(var cm)"/>
+    <param name="use_gpio" value="false"/>
+    <remap from="controller_manager/set_parameters" to="/$(var cm)/set_parameters"/>
+  </node>
+
+</launch>
