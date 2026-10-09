@@ -43,6 +43,46 @@ def rsi_xml_config_xacro_arg(context, path, inline):
     # Quoted as one token: the command is split like a shell command line
     return f"rsi_xml_config_file:='{value}'"
 
+def external_axis_xacro_args(context, robot_family, robot_model):
+    """Return the URDF source and xacro arguments of the robot + external axis (KL) description.
+
+    The composed model is named ROBOT_MODEL_with_KL_MODEL - this is also the name of the hardware
+    component, so the robot manager's robot_models has to match it.
+    """
+    family = robot_family.perform(context)
+    model = robot_model.perform(context)
+    kl_model = LaunchConfiguration("kl_model").perform(context)
+    robot_ros2_control_macro_file = (
+        f"{family}_ros2_control_macro.xacro"
+        if family.startswith("lbr_")
+        else f"kr_{family}_ros2_control_macro.xacro"
+    )
+    urdf_source = PathJoinSubstitution(
+        [FindPackageShare("kuka_resources"), "urdf", "robot_with_external_axis_template.urdf.xacro"]
+    )
+    xacro_args = []
+    for name, value in (
+        ("composed_model", f"{model}_with_{kl_model}"),
+        ("robot_family", family),
+        ("robot_model", model),
+        ("robot_support_package", f"kuka_{family}_support"),
+        ("robot_ros2_control_macro_file", robot_ros2_control_macro_file),
+        ("kl_model", kl_model),
+        ("kl_prefix", LaunchConfiguration("kl_prefix").perform(context)),
+        ("kl_support_package", LaunchConfiguration("kl_support_package").perform(context)),
+        (
+            "kl_ros2_control_macro_file",
+            LaunchConfiguration("kl_ros2_control_macro_file").perform(context),
+        ),
+        (
+            "kl_ros2_control_joints_macro",
+            LaunchConfiguration("kl_ros2_control_joints_macro").perform(context),
+        ),
+    ):
+        xacro_args += [" ", f"{name}:={value}"]
+    return urdf_source, xacro_args
+
+
 def launch_setup(context, *args, **kwargs):
     robot_model = LaunchConfiguration("robot_model")
     robot_family = LaunchConfiguration("robot_family")
@@ -77,18 +117,25 @@ def launch_setup(context, *args, **kwargs):
     else:
         tf_prefix = ns.perform(context) + "_"
 
+    urdf_source = PathJoinSubstitution(
+        [
+            FindPackageShare(f"kuka_{robot_family.perform(context)}_support"),
+            "urdf",
+            robot_model.perform(context) + ".urdf.xacro",
+        ]
+    )
+    external_axis_args = []
+    if LaunchConfiguration("use_external_axis").perform(context) == "true":
+        urdf_source, external_axis_args = external_axis_xacro_args(
+            context, robot_family, robot_model
+        )
+
     # Get URDF via xacro
     robot_description_content = Command(
         [
             PathJoinSubstitution([FindExecutable(name="xacro")]),
             " ",
-            PathJoinSubstitution(
-                [
-                    FindPackageShare(f"kuka_{robot_family.perform(context)}_support"),
-                    "urdf",
-                    robot_model.perform(context) + ".urdf.xacro",
-                ]
-            ),
+            urdf_source,
             " ",
             "mode:=",
             mode,
@@ -160,7 +207,8 @@ def launch_setup(context, *args, **kwargs):
             " ",
             "async_affinity:=",
             async_affinity,
-        ],
+        ]
+        + external_axis_args,
         on_stderr="capture",
     )
 
@@ -278,6 +326,51 @@ def generate_launch_description():
                 "CPU cores for the async hardware thread, e.g. '[2,3]' without spaces "
                 "(only used with is_async:=true). Empty list = no pinning."
             ),
+        )
+    )
+
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "use_external_axis",
+            default_value="false",
+            choices=["true", "false"],
+            description=(
+                "Describe the robot together with an external axis (KL). The hardware component "
+                "is then named ROBOT_MODEL_with_KL_MODEL."
+            ),
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "kl_model", default_value="kl100_2", description="External axis model (KL)."
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "kl_prefix",
+            default_value="rail_",
+            description="Prefix of the external axis links and joints, e.g. rail_joint_1.",
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "kl_support_package",
+            default_value="kuka_kl_support",
+            description="Package containing the KL model and KL ros2_control xacro macros.",
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "kl_ros2_control_macro_file",
+            default_value="kl_ros2_control_macro.xacro",
+            description="External-axis ros2_control macro file inside <kl_support_package>/urdf.",
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "kl_ros2_control_joints_macro",
+            default_value="kuka_kl_ros2_control_joints",
+            description="External-axis ros2_control joints macro used by the composed template.",
         )
     )
 
