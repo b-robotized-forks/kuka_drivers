@@ -38,6 +38,11 @@ RSI XML config YAML uploaded to the ctrlX (ctrlx_config_dir), selected by file n
   ros2 launch kuka_rsi_driver scenario_eki_rsi.launch.xml \
     robot_family:=quantec robot_model:=kr210_r3100_2 controller_ip:=172.31.1.178 \
     rsi_xml_config:=b_ctrldbox_rsi_xml_config.yaml
+
+With an external axis (KL) - the YAML needs the [EXT_AXIS] lines, the KUKA the ext_axis RSI files:
+  ros2 launch kuka_rsi_driver scenario_eki_rsi.launch.xml \
+    robot_family:=quantec robot_model:=kr210_r3100_2 controller_ip:=172.31.1.178 \
+    rsi_xml_config:=b_ctrldbox_rsi_xml_config.yaml use_external_axis:=true kl_model:=kl100_2 kl_prefix:=rail_
 -->
 
 <launch>
@@ -50,6 +55,17 @@ RSI XML config YAML uploaded to the ctrlX (ctrlx_config_dir), selected by file n
   <arg name="verify_robot_model"
        default="false"
        description="Check via EKI that the robot model reported by the KUKA controller matches robot_model."/>
+
+  <!-- ── External axis ───────────────────────────────────────────────── -->
+  <arg name="use_external_axis"
+       default="false"
+       description="Add an external axis (KL) to the description and the joint_trajectory_controller. The hardware component is then named ROBOT_MODEL_with_KL_MODEL."/>
+  <arg name="kl_model"
+       default="kl100_2"
+       description="External axis model (KL), only used with use_external_axis:=true."/>
+  <arg name="kl_prefix"
+       default="rail_"
+       description="Prefix of the external axis joint (KL_PREFIXjoint_1), only used with use_external_axis:=true. Must match the joint names in the RSI XML config YAML."/>
 
   <!-- ── Network ───────────────────────────────────────────────────────── -->
   <arg name="controller_ip"
@@ -101,6 +117,9 @@ RSI XML config YAML uploaded to the ctrlX (ctrlx_config_dir), selected by file n
        description="CPU cores of the async hardware thread without spaces, e.g. [2,3] (only used with is_async:=true). [] = no pinning."/>
 
   <let name="cm" value="$(var controller_manager_name)"/>
+  <!-- Name of the hardware component, as built by publish_description.launch.py -->
+  <let name="hardware_name"
+       value="$(eval &quot;'$(var robot_model)_with_$(var kl_model)' if '$(var use_external_axis)' == 'true' else '$(var robot_model)'&quot;)"/>
   <!-- Full path on the ctrlX, or empty (driver defaults) if no file name is given -->
   <let name="rsi_xml_config_path"
        value="$(eval &quot;'$(var ctrlx_config_dir)/$(var rsi_xml_config)' if '$(var rsi_xml_config)' else ''&quot;)"/>
@@ -123,6 +142,9 @@ RSI XML config YAML uploaded to the ctrlX (ctrlx_config_dir), selected by file n
     <arg name="async_scheduling_policy" value="$(var async_scheduling_policy)"/>
     <arg name="async_thread_priority" value="$(var async_thread_priority)"/>
     <arg name="async_affinity" value="$(var async_affinity)"/>
+    <arg name="use_external_axis" value="$(var use_external_axis)"/>
+    <arg name="kl_model" value="$(var kl_model)"/>
+    <arg name="kl_prefix" value="$(var kl_prefix)"/>
   </include>
 
   <!-- 2. Controllers, spawned inactive - the robot manager activates them.
@@ -134,11 +156,17 @@ RSI XML config YAML uploaded to the ctrlX (ctrlx_config_dir), selected by file n
 
   <!-- The ctrlX scenario file has no joint_trajectory_controller section, so its parameters are
        passed directly to the controller node (6 robot axes, no namespace/prefix). The joint list is
-       written out on purpose: a launch substitution inside the quoted argument breaks the quoting. -->
+       written out on purpose: a launch substitution inside the quoted argument breaks the quoting.
+       That is also why there is a second spawner for the external axis: with use_external_axis:=true
+       the external joint is rail_joint_1 (kl_prefix:=rail_ only). -->
   <node pkg="controller_manager" exec="spawner" name="joint_trajectory_controller_spawner"
-        cwd="$(var controllers_dir)" output="screen"
+        cwd="$(var controllers_dir)" output="screen" unless="$(var use_external_axis)"
         args="joint_trajectory_controller -c /$(var cm) -p scenario_controllers.yaml --inactive
               --controller-ros-args='-p joints:=[joint_1,joint_2,joint_3,joint_4,joint_5,joint_6] -p command_interfaces:=[position] -p state_interfaces:=[position] -p allow_nonzero_velocity_at_trajectory_end:=true'"/>
+  <node pkg="controller_manager" exec="spawner" name="joint_trajectory_controller_spawner"
+        cwd="$(var controllers_dir)" output="screen" if="$(var use_external_axis)"
+        args="joint_trajectory_controller -c /$(var cm) -p scenario_controllers.yaml --inactive
+              --controller-ros-args='-p joints:=[joint_1,joint_2,joint_3,joint_4,joint_5,joint_6,rail_joint_1] -p command_interfaces:=[position] -p state_interfaces:=[position] -p allow_nonzero_velocity_at_trajectory_end:=true'"/>
 
   <!-- Optional broadcasters for the sensors added with read_*, spawned inactive: activate them with
        switch_controllers after the robot manager has activated the hardware. pose_name must match
@@ -160,7 +188,7 @@ RSI XML config YAML uploaded to the ctrlX (ctrlx_config_dir), selected by file n
        manager (the client name is not derived from controller_manager_name). -->
   <node pkg="kuka_rsi_driver" exec="robot_manager_node_extended" name="robot_manager" output="screen">
     <param from="$(find-pkg-share kuka_rsi_driver)/config/driver_config.yaml"/>
-    <param name="robot_models" value="$(var robot_model)" value-sep=","/>
+    <param name="robot_models" value="$(var hardware_name)" value-sep=","/>
     <param name="controller_manager_name" value="$(var cm)"/>
     <param name="use_gpio" value="false"/>
     <remap from="controller_manager/set_parameters" to="/$(var cm)/set_parameters"/>
