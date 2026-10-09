@@ -43,6 +43,12 @@ With an external axis (KL) - the YAML needs the [EXT_AXIS] lines, the KUKA the e
   ros2 launch kuka_rsi_driver scenario_eki_rsi.launch.xml \
     robot_family:=quantec robot_model:=kr210_r3100_2 controller_ip:=172.31.1.178 \
     rsi_xml_config:=b_ctrldbox_rsi_xml_config.yaml use_external_axis:=true kl_model:=kl100_2 kl_prefix:=rail_
+
+With GPIOs - the YAML needs the gpio lines (names as in config/gpio_config.xacro), the KUKA the
+matching RSI files, the ctrlX scenario_controllers.yaml a gpio_controller section:
+  ros2 launch kuka_rsi_driver scenario_eki_rsi.launch.xml \
+    robot_family:=quantec robot_model:=kr210_r3100_2 controller_ip:=172.31.1.178 \
+    rsi_xml_config:=b_ctrldbox_rsi_xml_config_gpio_51.yaml use_gpio:=true
 -->
 
 <launch>
@@ -66,6 +72,11 @@ With an external axis (KL) - the YAML needs the [EXT_AXIS] lines, the KUKA the e
   <arg name="kl_prefix"
        default="rail_"
        description="Prefix of the external axis joint (KL_PREFIXjoint_1), only used with use_external_axis:=true. Must match the joint names in the RSI XML config YAML."/>
+
+  <!-- ── GPIO ──────────────────────────────────────────────────────────── -->
+  <arg name="use_gpio"
+       default="false"
+       description="Add the GPIO interfaces (config/gpio_config.xacro) and spawn gpio_controller. The robot manager activates it with the hardware."/>
 
   <!-- ── Network ───────────────────────────────────────────────────────── -->
   <arg name="controller_ip"
@@ -132,7 +143,7 @@ With an external axis (KL) - the YAML needs the [EXT_AXIS] lines, the KUKA the e
     <arg name="controller_ip" value="$(var controller_ip)"/>
     <arg name="client_ip" value="$(var client_ip)"/>
     <arg name="client_port" value="$(var client_port)"/>
-    <arg name="use_gpio" value="false"/>
+    <arg name="use_gpio" value="$(var use_gpio)"/>
     <arg name="verify_robot_model" value="$(var verify_robot_model)"/>
     <arg name="rsi_xml_config_file" value="$(var rsi_xml_config_path)"/>
     <arg name="read_robot_status" value="$(var read_robot_status)"/>
@@ -168,6 +179,12 @@ With an external axis (KL) - the YAML needs the [EXT_AXIS] lines, the KUKA the e
         args="joint_trajectory_controller -c /$(var cm) -p scenario_controllers.yaml --inactive
               --controller-ros-args='-p joints:=[joint_1,joint_2,joint_3,joint_4,joint_5,joint_6,rail_joint_1] -p command_interfaces:=[position] -p state_interfaces:=[position] -p allow_nonzero_velocity_at_trajectory_end:=true'"/>
 
+  <!-- GPIO controller, its parameters (gpios, interface names) come from the ctrlX
+       scenario_controllers.yaml. The robot manager activates it together with the hardware. -->
+  <node pkg="controller_manager" exec="spawner" name="gpio_controller_spawner"
+        cwd="$(var controllers_dir)" output="screen" if="$(var use_gpio)"
+        args="gpio_controller -c /$(var cm) -p scenario_controllers.yaml --inactive"/>
+
   <!-- Optional broadcasters for the sensors added with read_*, spawned inactive: activate them with
        switch_controllers after the robot manager has activated the hardware. pose_name must match
        the sensor names in the URDF. -->
@@ -190,7 +207,7 @@ With an external axis (KL) - the YAML needs the [EXT_AXIS] lines, the KUKA the e
     <param from="$(find-pkg-share kuka_rsi_driver)/config/driver_config.yaml"/>
     <param name="robot_models" value="$(var hardware_name)" value-sep=","/>
     <param name="controller_manager_name" value="$(var cm)"/>
-    <param name="use_gpio" value="false"/>
+    <param name="use_gpio" value="$(var use_gpio)"/>
     <remap from="controller_manager/set_parameters" to="/$(var cm)/set_parameters"/>
   </node>
 
