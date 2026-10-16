@@ -14,6 +14,12 @@
       type: gpio_controllers/GpioCommandController
     event_broadcaster:
       type: kuka_controllers/EventBroadcaster
+    robot_status_broadcaster:
+      type: kuka_controllers/RobotStatusBroadcaster
+    cartesian_pose_broadcaster:
+      type: pose_broadcaster/PoseBroadcaster
+    cartesian_setpoint_broadcaster:
+      type: pose_broadcaster/PoseBroadcaster
 
     overruns:
       print_warnings: false
