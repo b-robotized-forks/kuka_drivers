@@ -1,4 +1,4 @@
-# Copyright 2023 KUKA Hungaria Kft.
+# Copyright 2026 KUKA Hungaria Kft.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+import os
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -25,11 +27,25 @@ from launch.substitutions import (
 from launch_ros.actions import LifecycleNode, Node
 from launch_ros.substitutions import FindPackageShare
 
+COMPOSED_TEMPLATE_XACRO = "robot_with_external_axis_template.urdf.xacro"
+
+
+def _ros2_control_macro_file_from_family(robot_family):
+    if robot_family.startswith("lbr_"):
+        return f"{robot_family}_ros2_control_macro.xacro"
+    return f"kr_{robot_family}_ros2_control_macro.xacro"
+
 
 def launch_setup(context, *args, **kwargs):
     controller_manager_name = LaunchConfiguration("controller_manager_name")
     robot_model = LaunchConfiguration("robot_model")
     robot_family = LaunchConfiguration("robot_family")
+    use_external_axis = LaunchConfiguration("use_external_axis")
+    kl_model = LaunchConfiguration("kl_model")
+    kl_support_package = LaunchConfiguration("kl_support_package")
+    kl_prefix = LaunchConfiguration("kl_prefix")
+    kl_ros2_control_macro_file = LaunchConfiguration("kl_ros2_control_macro_file")
+    kl_ros2_control_joints_macro = LaunchConfiguration("kl_ros2_control_joints_macro")
     mode = LaunchConfiguration("mode")
     use_gpio = LaunchConfiguration("use_gpio")
     driver_version = LaunchConfiguration("driver_version")
@@ -45,14 +61,14 @@ def launch_setup(context, *args, **kwargs):
     yaw = LaunchConfiguration("yaw")
     roundtrip_time = LaunchConfiguration("roundtrip_time")
     verify_robot_model = LaunchConfiguration("verify_robot_model")
+    rsi_xml_config_file = LaunchConfiguration("rsi_xml_config_file")
     ns = LaunchConfiguration("namespace")
-    controller_config = LaunchConfiguration("controller_config")
-    jtc_config = LaunchConfiguration("jtc_config")
-    gpio_config = LaunchConfiguration("gpio_config")
+    controller_config_dir = LaunchConfiguration("controller_config_dir")
     non_rt_cores = LaunchConfiguration("non_rt_cores")
     rt_core = LaunchConfiguration("rt_core")
     rt_prio = LaunchConfiguration("rt_prio")
     lock_memory = LaunchConfiguration("lock_memory")
+    enable_rsi_monitoring = LaunchConfiguration("enable_rsi_monitoring")
     if ns.perform(context) == "":
         tf_prefix = ""
     else:
@@ -79,84 +95,190 @@ def launch_setup(context, *args, **kwargs):
         core_list_str = ",".join(str(c) for c in cores)
         prefix_cmd = f"taskset -c {core_list_str}"
 
-    if not controller_config.perform(context):
-        rel_path_to_config_file = (
-            "/config/ros2_controller_config_rsi_only.yaml"
-            if driver_version.perform(context) == "rsi_only"
-            else "/config/ros2_controller_config_extended.yaml"
-        )
-        controller_config = (
-            get_package_share_directory("kuka_rsi_driver") + rel_path_to_config_file
-        )
+    robot_model_value = robot_model.perform(context)
+    robot_family_value = robot_family.perform(context)
+    use_external_axis_value = use_external_axis.perform(context) == "true"
+    kl_model_value = kl_model.perform(context)
+    kl_support_package_value = kl_support_package.perform(context)
+    kl_prefix_value = kl_prefix.perform(context)
+    kl_ros2_control_macro_file_value = kl_ros2_control_macro_file.perform(context)
+    kl_ros2_control_joints_macro_value = kl_ros2_control_joints_macro.perform(context)
 
-    # Get URDF via xacro
-    robot_description_content = Command(
-        [
-            PathJoinSubstitution([FindExecutable(name="xacro")]),
+    robot_support_package = f"kuka_{robot_family_value}_support"
+    urdf_source = PathJoinSubstitution(
+        [FindPackageShare(robot_support_package), "urdf", robot_model_value + ".urdf.xacro"]
+    )
+    effective_robot_model = robot_model_value
+    template_xacro_args = []
+
+    if use_external_axis_value:
+        robot_ros2_control_macro_file = _ros2_control_macro_file_from_family(robot_family_value)
+
+        robot_model_macro_path = os.path.join(
+            get_package_share_directory(robot_support_package),
+            "urdf",
+            robot_model_value + "_macro.xacro",
+        )
+        if not os.path.isfile(robot_model_macro_path):
+            raise RuntimeError(
+                f"Robot model macro file was not found: {robot_model_macro_path}. "
+                "Check robot_model/robot_family values."
+            )
+
+        robot_ros2_control_macro_path = os.path.join(
+            get_package_share_directory(robot_support_package),
+            "urdf",
+            robot_ros2_control_macro_file,
+        )
+        if not os.path.isfile(robot_ros2_control_macro_path):
+            raise RuntimeError(
+                f"Robot ros2_control macro file was not found: {robot_ros2_control_macro_path}."
+            )
+
+        kl_model_macro_path = os.path.join(
+            get_package_share_directory(kl_support_package_value),
+            "urdf",
+            kl_model_value + "_macro.xacro",
+        )
+        if not os.path.isfile(kl_model_macro_path):
+            raise RuntimeError(
+                f"KL model macro file was not found: {kl_model_macro_path}. "
+                "Check kl_model/kl_support_package values."
+            )
+
+        kl_ros2_control_macro_path = os.path.join(
+            get_package_share_directory(kl_support_package_value),
+            "urdf",
+            kl_ros2_control_macro_file_value,
+        )
+        if not os.path.isfile(kl_ros2_control_macro_path):
+            raise RuntimeError(
+                f"KL ros2_control macro file was not found: {kl_ros2_control_macro_path}."
+            )
+
+        urdf_source = PathJoinSubstitution(
+            [FindPackageShare("kuka_resources"), "urdf", COMPOSED_TEMPLATE_XACRO]
+        )
+        template_xacro_args = [
             " ",
-            PathJoinSubstitution(
-                [
-                    FindPackageShare(f"kuka_{robot_family.perform(context)}_support"),
-                    "urdf",
-                    robot_model.perform(context) + ".urdf.xacro",
-                ]
-            ),
+            "robot_model:=",
+            robot_model_value,
             " ",
-            "mode:=",
-            mode,
+            "robot_support_package:=",
+            robot_support_package,
             " ",
-            "use_gpio:=",
-            use_gpio,
+            "robot_family:=",
+            robot_family_value,
             " ",
-            "driver_version:=",
-            driver_version,
+            "kl_support_package:=",
+            kl_support_package_value,
             " ",
-            "client_port:=",
-            client_port,
+            "robot_ros2_control_macro_file:=",
+            robot_ros2_control_macro_file,
             " ",
-            "mxa_client_port:=",
-            mxa_client_port,
+            "kl_ros2_control_macro_file:=",
+            kl_ros2_control_macro_file_value,
             " ",
-            "client_ip:=",
-            client_ip,
+            "kl_model:=",
+            kl_model_value,
             " ",
-            "controller_ip:=",
-            controller_ip,
-            " ",
-            "prefix:=",
-            tf_prefix,
-            " ",
-            "x:=",
-            x,
-            " ",
-            "y:=",
-            y,
-            " ",
-            "z:=",
-            z,
-            " ",
-            "roll:=",
-            roll,
-            " ",
-            "pitch:=",
-            pitch,
-            " ",
-            "yaw:=",
-            yaw,
-            " ",
-            "roundtrip_time:=",
-            roundtrip_time,
-            " ",
-            "verify_robot_model:=",
-            verify_robot_model,
-        ],
-        on_stderr="capture",
+            "kl_ros2_control_joints_macro:=",
+            kl_ros2_control_joints_macro_value,
+        ]
+        effective_robot_model = f"{robot_model_value}_with_{kl_model_value}"
+
+    jtc_config_param = (
+        "joint_trajectory_controller_config_6_axis_kl.yaml"
+        if use_external_axis_value
+        else "joint_trajectory_controller_config.yaml"
     )
 
+    # Get URDF via xacro
+    xacro_arguments = [
+        PathJoinSubstitution([FindExecutable(name="xacro")]),
+        " ",
+        urdf_source,
+        " ",
+        "mode:=",
+        mode,
+        " ",
+        "use_gpio:=",
+        use_gpio,
+        " ",
+        "driver_version:=",
+        driver_version,
+        " ",
+        "client_port:=",
+        client_port,
+        " ",
+        "mxa_client_port:=",
+        mxa_client_port,
+        " ",
+        "client_ip:=",
+        client_ip,
+        " ",
+        "controller_ip:=",
+        controller_ip,
+        " ",
+        "prefix:=",
+        tf_prefix,
+        " ",
+        "x:=",
+        x,
+        " ",
+        "y:=",
+        y,
+        " ",
+        "z:=",
+        z,
+        " ",
+        "roll:=",
+        roll,
+        " ",
+        "pitch:=",
+        pitch,
+        " ",
+        "yaw:=",
+        yaw,
+        " ",
+        "roundtrip_time:=",
+        roundtrip_time,
+        " ",
+        "verify_robot_model:=",
+        verify_robot_model,
+        " ",
+        "rsi_xml_config_file:=",
+        rsi_xml_config_file,
+    ]
+
+    if use_external_axis_value:
+        xacro_arguments.extend(
+            [
+                " ",
+                "kl_prefix:=",
+                kl_prefix_value,
+                " ",
+                "composed_model:=",
+                effective_robot_model,
+            ]
+        )
+        xacro_arguments.extend(template_xacro_args)
+
+    robot_description_content = Command(xacro_arguments, on_stderr="capture")
     robot_description = {"robot_description": robot_description_content}
 
     # The driver config contains only parameters that can be changed after startup
     driver_config = get_package_share_directory("kuka_rsi_driver") + "/config/driver_config.yaml"
+    config_dir_path = controller_config_dir.perform(context)
+
+    def config_file(filename):
+        return os.path.join(config_dir_path, filename)
+
+    controller_config_file = (
+        config_file("ros2_controller_config_rsi_only.yaml")
+        if driver_version.perform(context) == "rsi_only"
+        else config_file("ros2_controller_config_extended.yaml")
+    )
 
     control_node = Node(
         namespace=ns,
@@ -164,13 +286,13 @@ def launch_setup(context, *args, **kwargs):
         executable="control_node",
         parameters=[
             robot_description,
-            controller_config,
+            controller_config_file,
             {
                 "cpu_affinity": int(rt_core.perform(context)),
                 "thread_priority": int(rt_prio.perform(context)),
                 "lock_memory": lock_memory.perform(context) == "true",
                 "hardware_components_initial_state": {
-                    "unconfigured": [tf_prefix + robot_model.perform(context)]
+                    "unconfigured": [tf_prefix + effective_robot_model]
                 },
             },
         ],
@@ -185,7 +307,10 @@ def launch_setup(context, *args, **kwargs):
             if driver_version.perform(context) == "rsi_only"
             else "robot_manager_node_extended"
         ),
-        parameters=[driver_config, {"robot_model": robot_model, "use_gpio": use_gpio}],
+        parameters=[
+            driver_config,
+            {"robot_models": [effective_robot_model], "use_gpio": use_gpio},
+        ],
         prefix=prefix_cmd,
     )
     robot_state_publisher = Node(
@@ -223,16 +348,16 @@ def launch_setup(context, *args, **kwargs):
 
     controllers = {
         "joint_state_broadcaster": None,
-        "joint_trajectory_controller": jtc_config,
-        "event_broadcaster": None,
+        "joint_trajectory_controller": config_file(jtc_config_param),
+        "event_broadcaster": config_file("kuka_event_broadcaster_config.yaml"),
     }
 
     if use_gpio.perform(context) == "true":
-        controllers["gpio_controller"] = gpio_config
+        controllers["gpio_controller"] = config_file("gpio_controller_config.yaml")
 
     if driver_version.perform(context) in {"eki_rsi", "mxa_rsi"}:
-        controllers["control_mode_handler"] = None
-        controllers["kss_message_handler"] = None
+        controllers["control_mode_handler"] = config_file("kuka_control_mode_handler_config.yaml")
+        controllers["kss_message_handler"] = config_file("kuka_kss_message_handler_config.yaml")
 
     controller_spawners = [
         controller_spawner(name, prefix_cmd, param_file)
@@ -245,6 +370,21 @@ def launch_setup(context, *args, **kwargs):
         robot_state_publisher,
     ] + controller_spawners
 
+    if enable_rsi_monitoring.perform(context) == "true":
+        monitor_rsi_port = int(client_port.perform(context))
+        nodes_to_start.append(
+            Node(
+                namespace=ns,
+                package="kuka_rsi_driver",
+                executable="rsi_monitor_node.py",
+                parameters=[
+                    {
+                        "rsi_port": monitor_rsi_port,
+                    }
+                ],
+            )
+        )
+
     return nodes_to_start
 
 
@@ -253,6 +393,44 @@ def generate_launch_description():
     launch_arguments.append(DeclareLaunchArgument("controller_manager_name", default_value="b_controlled_box_cm"))
     launch_arguments.append(DeclareLaunchArgument("robot_model", default_value="kr6_r700_sixx"))
     launch_arguments.append(DeclareLaunchArgument("robot_family", default_value="agilus"))
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "use_external_axis",
+            default_value="false",
+            choices=["true", "false"],
+            description=("Compose robot_model and kl_model with reusable template xacro."),
+        )
+    )
+    launch_arguments.append(DeclareLaunchArgument("kl_model", default_value="kl100_2"))
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "kl_support_package",
+            default_value="kuka_kl_support",
+            description=(
+                "Package containing KL model and KL ros2_control xacro macros. "
+                "Defaults to kuka_kl_support."
+            ),
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "kl_ros2_control_macro_file",
+            default_value="kl_ros2_control_macro.xacro",
+            description=(
+                "External-axis ros2_control macro file inside <kl_support_package>/urdf."
+            ),
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "kl_ros2_control_joints_macro",
+            default_value="kuka_kl_ros2_control_joints",
+            description=(
+                "External-axis ros2_control joints macro name used by the composed URDF template."
+            ),
+        )
+    )
+    launch_arguments.append(DeclareLaunchArgument("kl_prefix", default_value="rail_"))
     launch_arguments.append(DeclareLaunchArgument("mode", default_value="hardware"))
     launch_arguments.append(
         DeclareLaunchArgument("use_gpio", default_value="false", choices=["true", "false"])
@@ -282,19 +460,22 @@ def generate_launch_description():
             "verify_robot_model", default_value="true", choices=["true", "false"]
         )
     )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "rsi_xml_config_file",
+            default_value="",
+            description=(
+                "Absolute path to an RSI XML config YAML file. "
+                "When set, configures the XML element/attribute names used in RSI messages. "
+                "Leave empty to use the SDK defaults."
+            ),
+        )
+    )
     launch_arguments.append(DeclareLaunchArgument("controller_config", default_value=""))
     launch_arguments.append(
         DeclareLaunchArgument(
-            "jtc_config",
-            default_value=get_package_share_directory("kuka_rsi_driver")
-            + "/config/joint_trajectory_controller_config.yaml",
-        )
-    )
-    launch_arguments.append(
-        DeclareLaunchArgument(
-            "gpio_config",
-            default_value=get_package_share_directory("kuka_rsi_driver")
-            + "/config/gpio_controller_config.yaml",
+            "controller_config_dir",
+            default_value=get_package_share_directory("kuka_rsi_driver") + "/config",
         )
     )
     launch_arguments.append(
@@ -319,6 +500,11 @@ def generate_launch_description():
                 "Comma-separated CPU core indices for taskset pinning of non-RT threads "
                 "(e.g. '2,3,4'). Leave empty to disable pinning."
             ),
+        )
+    )
+    launch_arguments.append(
+        DeclareLaunchArgument(
+            "enable_rsi_monitoring", default_value="false", choices=["true", "false"]
         )
     )
     launch_arguments.append(
