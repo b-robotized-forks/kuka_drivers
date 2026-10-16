@@ -121,6 +121,8 @@ protected:
     std::vector<double> torque_states;
     std::vector<double> gpio_states;
     std::vector<double> current_states;
+    // [0] = program_state (raw $PRO_STATE code), [1] = speed_scaling_factor (0-1).
+    std::vector<double> robot_status_states;
     std::vector<double> position_commands;
     std::vector<double> velocity_commands;
     std::vector<double> torque_commands;
@@ -132,6 +134,7 @@ protected:
     bool has_velocity_state_interface = false;
     bool has_torque_state_interface = false;
     bool has_current_state_interface = false;
+    bool has_robot_status_state_interface = false;
     bool has_velocity_command_interface = false;
     bool has_torque_command_interface = false;
   };
@@ -211,6 +214,9 @@ protected:
   std::vector<std::string> joint_velocity_command_names_;
   std::vector<std::string> joint_effort_command_names_;
   std::vector<std::string> joint_current_state_names_;
+  // [0] = program_state, [1] = speed_scaling_factor. Only populated when
+  // has_robot_status_state_interface is true (opt-in via a "robot_status" URDF sensor).
+  std::vector<std::string> robot_status_state_names_;
   std::vector<std::string> gpio_state_names_;
   std::vector<std::string> gpio_command_names_;
   std::string server_state_name_;
@@ -233,6 +239,18 @@ private:
   static constexpr std::string_view kRsiXmlConfigFileParam = "rsi_xml_config_file";
   // Opt-in per joint via the URDF; unlike position/velocity/effort this is not mandatory.
   static constexpr std::string_view kCurrentInterfaceName = "current";
+
+  // Opt-in via a "robot_status" URDF sensor component (program_state, speed_scaling_factor).
+  // Requires the robot's RSI config to transmit the custom RSIVisual "Status"/"OV_PRO" object
+  // outputs as ProgStatus.R (LONG) and OvPro.R (DOUBLE) -- not a standard RSI_EthernetKrl keyword
+  // like MACur/MECur, so this needs an RSIVisual object configured on the KRC side. program_state
+  // is the raw $PRO_STATE code (RUNNING=3, STOPPED=4); speed_scaling_factor is $OV_PRO normalized
+  // to 0-1 and forced to 0 whenever the program isn't RUNNING, matching its meaning as a live
+  // override on a running program.
+  static constexpr std::string_view kRobotStatusSensorName = "robot_status";
+  static constexpr std::string_view kProgramStateInterfaceName = "program_state";
+  static constexpr std::string_view kSpeedScalingInterfaceName = "speed_scaling_factor";
+  static constexpr double kProgramStatusRunning = 3.0;
 };
 }  // namespace kuka_rsi_driver
 
