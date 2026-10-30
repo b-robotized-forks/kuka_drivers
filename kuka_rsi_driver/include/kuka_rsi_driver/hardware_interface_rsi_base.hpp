@@ -289,9 +289,8 @@ private:
   KUKA_RSI_DRIVER_LOCAL static std::array<double, 7> CartesianPoseToPositionQuaternion(
     const std::vector<double> & xyzabc);
 
-  // Detects an opt-in sensor with the given name and exactly kCartesianPoseInterfaceNames'
-  // interfaces (shared by cartesian_pose, cartesian_setpoint, and robot_status's own 2-interface
-  // variant is handled separately in on_init() since its interface set differs).
+  // Used to detect if the cartesian_pose and cartesian_setpoint sensors are declared in the URDF.
+  // Returns false only if the sensor is declared but missing an interface.
   KUKA_RSI_DRIVER_LOCAL bool DetectPoseSensor(
     const std::string & sensor_name, bool & has_flag, std::vector<std::string> & state_names);
 };
