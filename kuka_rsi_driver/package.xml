@@ -17,7 +17,6 @@
   <depend>eigen</depend>
   <depend>hardware_interface</depend>
   <depend>kuka_driver_interfaces</depend>
-  <depend>kuka_external_control_sdk</depend>
   <depend>kuka_drivers_core</depend>
   <depend>pluginlib</depend>
   <depend>std_msgs</depend>
