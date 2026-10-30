@@ -42,6 +42,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
   interface_data_.torque_states.resize(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.current_states.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
+  interface_data_.robot_status_states.resize(2, std::numeric_limits<double>::quiet_NaN());
   interface_data_.position_commands.resize(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.velocity_commands.resize(
@@ -87,6 +88,9 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
   // TODO(Sachin): Check here
   // Derive optional interface flags from the XML config.
   bool motor_current_configured_in_xml = false;
+  // Only robot_status currently uses custom_fields, so its presence (2 entries: program_state,
+  // speed_scaling) is a sufficient check; revisit if another feature also uses custom_fields.
+  bool robot_status_configured_in_xml = false;
   if (motion_state_xml_config_.has_value())
   {
     using MST = kuka::external::control::kss::MotionStateSignalType;
@@ -103,6 +107,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
       joint_fields.cbegin(), joint_fields.cend(),
       [](const kuka::external::control::kss::MotionStateJointFieldConfiguration & field)
       { return field.signal_type == MST::CURRENT; });
+    robot_status_configured_in_xml = motion_state_xml_config_.value().custom_fields.size() >= 2;
   }
 
   if (control_signal_xml_config_.has_value())
@@ -143,6 +148,16 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
       "(NaN) and will not be updated with actual measurements from the robot.");
   }
 
+  if (optional_interface_flags_.has_robot_status_state_interface && !robot_status_configured_in_xml)
+  {
+    RCLCPP_WARN(
+      logger_,
+      "Robot status state interfaces are declared in the URDF, but the RSI XML config does not "
+      "configure the required custom fields (ProgStatus.R, OvPro.R). Program state and speed "
+      "scaling values will remain at their default (NaN) and will not be updated with actual "
+      "measurements from the robot.");
+  }
+
   if (!optional_interface_flags_.has_velocity_command_interface)
   {
     RCLCPP_WARN(
@@ -160,6 +175,36 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
       "Effort command interfaces will be exported to ROS 2 Control, but control_signal.torques "
       "(or control_signal.ext_torques) is not enabled in RSI XML. Effort commands will not be "
       "transmitted to the robot even if they are written to ROS 2 Control.");
+  }
+
+  // Optional: a "robot_status" sensor component with 2 state interfaces (program_state,
+  // speed_scaling_factor). Requires the robot's RSI config to transmit ProgStatus.R/OvPro.R via
+  // custom_fields (see rsi_xml_configuration_parser.cpp).
+  const std::string robot_status_sensor_name(kRobotStatusSensorName);
+  const auto robot_status_sensor_it = std::find_if(
+    info_.sensors.cbegin(), info_.sensors.cend(),
+    [&robot_status_sensor_name](const hardware_interface::ComponentInfo & sensor)
+    { return sensor.name == robot_status_sensor_name; });
+  optional_interface_flags_.has_robot_status_state_interface =
+    robot_status_sensor_it != info_.sensors.cend();
+  if (optional_interface_flags_.has_robot_status_state_interface)
+  {
+    for (const auto interface_name : {kProgramStateInterfaceName, kSpeedScalingInterfaceName})
+    {
+      const std::string expected_name(interface_name);
+      const bool found = std::any_of(
+        robot_status_sensor_it->state_interfaces.cbegin(),
+        robot_status_sensor_it->state_interfaces.cend(),
+        [&expected_name](const hardware_interface::InterfaceInfo & state_interface)
+        { return state_interface.name == expected_name; });
+      if (!found)
+      {
+        RCLCPP_FATAL(
+          logger_, "Sensor \"%s\" is missing state interface \"%s\"",
+          robot_status_sensor_name.c_str(), expected_name.c_str());
+        return CallbackReturn::ERROR;
+      }
+    }
   }
 
   // Check gpio components size
@@ -240,6 +285,13 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
       joint_current_state_names_[i] =
         info_.joints[i].name + "/" + std::string(kCurrentInterfaceName);
     }
+  }
+
+  if (optional_interface_flags_.has_robot_status_state_interface)
+  {
+    robot_status_state_names_ = {
+      robot_status_sensor_name + "/" + std::string(kProgramStateInterfaceName),
+      robot_status_sensor_name + "/" + std::string(kSpeedScalingInterfaceName)};
   }
 
   gpio_state_names_.resize(gpio.state_interfaces.size());
@@ -497,6 +549,17 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
       const auto & currents = req_message.GetMeasuredCurrents();
       std::copy(currents.cbegin(), currents.cend(), interface_data_.current_states.begin());
     }
+    if (optional_interface_flags_.has_robot_status_state_interface)
+    {
+      const auto & custom_values = req_message.GetMeasuredCustomValues();
+      const double program_state = custom_values[0];
+      interface_data_.robot_status_states[0] = program_state;
+      // OvPro is a 0-100 percentage; normalize to 0-1, and treat it as meaningless (0) whenever
+      // the program isn't actually running, matching how $OV_PRO is only a live override on a
+      // running program.
+      interface_data_.robot_status_states[1] =
+        (program_state == kProgramStatusRunning) ? (custom_values[1] / 100.0) : 0.0;
+    }
     // Save IO states
     for (size_t i = 0; i < interface_data_.gpio_states.size(); i++)
     {
@@ -536,6 +599,11 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
       {
         set_state(joint_current_state_names_[i], interface_data_.current_states[i]);
       }
+    }
+    if (optional_interface_flags_.has_robot_status_state_interface)
+    {
+      set_state(robot_status_state_names_[0], interface_data_.robot_status_states[0]);
+      set_state(robot_status_state_names_[1], interface_data_.robot_status_states[1]);
     }
     for (size_t i = 0; i < gpio_state_names_.size(); i++)
     {
