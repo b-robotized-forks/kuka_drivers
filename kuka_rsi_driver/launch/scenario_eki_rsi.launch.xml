@@ -188,10 +188,6 @@ matching RSI files, the ctrlX scenario_controllers.yaml a gpio_controller sectio
   <!-- Optional broadcasters for the sensors added with read_*, spawned inactive: activate them with
        switch_controllers after the robot manager has activated the hardware. pose_name must match
        the sensor names in the URDF. -->
-  <!-- robot_status_broadcaster (kuka_controllers/RobotStatusBroadcaster) is not in the ctrlX snap
-       yet. Once it is, enable its type in scenario_controllers.yaml and add a spawner like the ones
-       below: args "robot_status_broadcaster -c /CM -p scenario_controllers.yaml" plus inactive,
-       if="$(var read_robot_status)". -->
   <node pkg="controller_manager" exec="spawner" name="cartesian_pose_broadcaster_spawner"
         cwd="$(var controllers_dir)" output="screen" if="$(var read_cartesian_pose)"
         args="cartesian_pose_broadcaster -c /$(var cm) -p scenario_controllers.yaml --inactive

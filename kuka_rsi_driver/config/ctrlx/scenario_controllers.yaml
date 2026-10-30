@@ -32,13 +32,6 @@ gpio_controller:
   ros__parameters:
     type: gpio_controllers/GpioCommandController
 
-# Optional broadcasters, spawned by scenario_eki_rsi.launch.xml with read_robot_status /
-# read_cartesian_pose / read_cartesian_setpoint
-# Not in the ctrlX snap yet (kuka_robot_status_broadcaster), enable once it is:
-# robot_status_broadcaster:
-#   ros__parameters:
-#     type: kuka_controllers/RobotStatusBroadcaster
-
 cartesian_pose_broadcaster:
   ros__parameters:
     type: pose_broadcaster/PoseBroadcaster
