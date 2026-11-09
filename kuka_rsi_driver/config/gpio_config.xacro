@@ -3,19 +3,22 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:macro name="gpio_config">
     <gpio name="gpio">
-      <!-- Example on how to fill GPIO fields, used by the example configuration-->
-      <command_interface name="01" data_type="bool">
+      <!-- Names must match the GPIO lines of the RSI XML config YAML, e.g.
+           b_ctrldbox_rsi_xml_config_gpio_51.yaml (RSI configuration gpio_51).
+           data_type is double because gpio_controllers/GpioCommandController and the driver access the
+           interfaces as double (a bool interface fails with "value_ptr_ is null"). The driver
+           then sends the value as a number (1.0000 / 0.0000), so the matching elements in the
+           RSI ethernet config must be TYPE="DOUBLE". 0 = off, 1 = on. -->
+      <!-- output_01 -> $OUT[51] -->
+      <command_interface name="output_01" data_type="double">
         <limits enable="false"/>
-        <param name="initial_value">false</param>
+        <param name="initial_value">0.0</param>
       </command_interface>
 
-      <state_interface name="01" data_type="bool">
+      <!-- input_01 <- $IN[51] -->
+      <state_interface name="input_01" data_type="double">
         <limits enable="false"/>
-        <param name="initial_value">false</param>
-      </state_interface>
-      <state_interface name="02" data_type="bool">
-        <limits enable="false"/>
-        <param name="initial_value">false</param>
+        <param name="initial_value">0.0</param>
       </state_interface>
     </gpio>
   </xacro:macro>

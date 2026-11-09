@@ -1,0 +1,14 @@
+/**/cartesian_pose_broadcaster:
+  ros__parameters:
+    # Must match the "cartesian_pose" sensor component name declared in the URDF (see
+    # kuka_rsi_driver's kCartesianPoseSensorName). Sources from RIst (actual pose).
+    pose_name: cartesian_pose
+    frame_id: base_link
+
+/**/cartesian_setpoint_broadcaster:
+  ros__parameters:
+    # Must match the "cartesian_setpoint" sensor component name declared in the URDF (see
+    # kuka_rsi_driver's kCartesianSetpointSensorName). Sources from RSol (setpoint pose); requires
+    # motion_state.cartesian_setpoint.enabled: true in the RSI XML config.
+    pose_name: cartesian_setpoint
+    frame_id: base_link

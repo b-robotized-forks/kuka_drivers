@@ -15,6 +15,7 @@
 #ifndef KUKA_RSI_DRIVER__HARDWARE_INTERFACE_RSI_BASE_HPP_
 #define KUKA_RSI_DRIVER__HARDWARE_INTERFACE_RSI_BASE_HPP_
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -121,8 +122,14 @@ protected:
     std::vector<double> torque_states;
     std::vector<double> gpio_states;
     std::vector<double> current_states;
+    std::vector<double> setpoint_position_states;
     // [0] = program_state (raw $PRO_STATE code), [1] = speed_scaling_factor (0-1).
     std::vector<double> robot_status_states;
+    // Both, when present, hold 7 values matching semantic_components::PoseSensor's layout:
+    // [0-2] = position.x/y/z (metres), [3-6] = orientation.x/y/z/w (quaternion), converted from
+    // KUKA's native X/Y/Z + ABC Euler angles.
+    std::vector<double> cartesian_pose_states;
+    std::vector<double> cartesian_setpoint_states;
     std::vector<double> position_commands;
     std::vector<double> velocity_commands;
     std::vector<double> torque_commands;
@@ -134,7 +141,10 @@ protected:
     bool has_velocity_state_interface = false;
     bool has_torque_state_interface = false;
     bool has_current_state_interface = false;
+    bool has_setpoint_position_state_interface = false;
     bool has_robot_status_state_interface = false;
+    bool has_cartesian_pose_state_interface = false;
+    bool has_cartesian_setpoint_state_interface = false;
     bool has_velocity_command_interface = false;
     bool has_torque_command_interface = false;
   };
@@ -214,9 +224,14 @@ protected:
   std::vector<std::string> joint_velocity_command_names_;
   std::vector<std::string> joint_effort_command_names_;
   std::vector<std::string> joint_current_state_names_;
+  std::vector<std::string> joint_setpoint_position_state_names_;
   // [0] = program_state, [1] = speed_scaling_factor. Only populated when
   // has_robot_status_state_interface is true (opt-in via a "robot_status" URDF sensor).
   std::vector<std::string> robot_status_state_names_;
+  // 7 entries each (position.x/y/z, orientation.x/y/z/w), matching kCartesianPoseInterfaceNames.
+  // Only populated when the corresponding has_*_state_interface flag is true.
+  std::vector<std::string> cartesian_pose_state_names_;
+  std::vector<std::string> cartesian_setpoint_state_names_;
   std::vector<std::string> gpio_state_names_;
   std::vector<std::string> gpio_command_names_;
   std::string server_state_name_;
@@ -239,6 +254,8 @@ private:
   static constexpr std::string_view kRsiXmlConfigFileParam = "rsi_xml_config_file";
   // Opt-in per joint via the URDF; unlike position/velocity/effort this is not mandatory.
   static constexpr std::string_view kCurrentInterfaceName = "current";
+  // Axis-specific setpoint position (ASPos/ESPos), opt-in per joint via the URDF like "current".
+  static constexpr std::string_view kSetpointPositionInterfaceName = "position_setpoint";
 
   // Opt-in via a "robot_status" URDF sensor component (program_state, speed_scaling_factor).
   // Requires the robot's RSI config to transmit the custom RSIVisual "Status"/"OV_PRO" object
@@ -251,6 +268,31 @@ private:
   static constexpr std::string_view kProgramStateInterfaceName = "program_state";
   static constexpr std::string_view kSpeedScalingInterfaceName = "speed_scaling_factor";
   static constexpr double kProgramStatusRunning = 3.0;
+
+  // Opt-in via "cartesian_pose"/"cartesian_setpoint" URDF sensor components, each with the 7
+  // state interfaces semantic_components::PoseSensor (and pose_broadcaster) expect: position.x/
+  // y/z (metres) and orientation.x/y/z/w (quaternion). cartesian_pose sources from RIst (actual
+  // pose, on by default at the SDK level); cartesian_setpoint sources from RSol (setpoint pose,
+  // opt-in at the SDK level too, via motion_state.cartesian_setpoint.enabled in the RSI XML
+  // config). Both come in from the SDK as X/Y/Z (metres) + KUKA's native A/B/C Euler angles
+  // (radians, intrinsic Z-Y'-X''), converted to quaternion in Read().
+  static constexpr std::string_view kCartesianPoseSensorName = "cartesian_pose";
+  static constexpr std::string_view kCartesianSetpointSensorName = "cartesian_setpoint";
+  static constexpr std::array<std::string_view, 7> kCartesianPoseInterfaceNames = {
+    "position.x",    "position.y",    "position.z",   "orientation.x",
+    "orientation.y", "orientation.z", "orientation.w"};
+
+  // Converts KUKA's X/Y/Z (millimetres, as parsed by the SDK) + A/B/C Euler angles (radians,
+  // intrinsic Z-Y'-X'') into the 7-value [x, y, z, qx, qy, qz, qw] layout
+  // kCartesianPoseInterfaceNames expects, with x/y/z in metres (ROS REP 103).
+  static constexpr double kMillimetersToMeters = 1e-3;
+  KUKA_RSI_DRIVER_LOCAL static std::array<double, 7> CartesianPoseToPositionQuaternion(
+    const std::vector<double> & xyzabc);
+
+  // Used to detect if the cartesian_pose and cartesian_setpoint sensors are declared in the URDF.
+  // Returns false only if the sensor is declared but missing an interface.
+  KUKA_RSI_DRIVER_LOCAL bool DetectPoseSensor(
+    const std::string & sensor_name, bool & has_flag, std::vector<std::string> & state_names);
 };
 }  // namespace kuka_rsi_driver
 
