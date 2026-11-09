@@ -113,6 +113,11 @@ bool RsiXmlConfigurationParser::ParseMotionState(
     return false;
   }
 
+  if (!ParseRobotStatus(motion_state_node["robot_status"], motion_state_xml))
+  {
+    return false;
+  }
+
   RCLCPP_INFO(logger_, "Custom motion state XML configuration loaded from '%s'", path.c_str());
   config.motion_state_xml_config = std::move(motion_state_xml);
   return true;
@@ -280,6 +285,48 @@ bool RsiXmlConfigurationParser::ParseMotionStateGpio(
         motion_state_xml.gpio_xml_attributes.size(), gpio_state_interface_count);
       return false;
     }
+  }
+
+  return true;
+}
+
+bool RsiXmlConfigurationParser::ParseRobotStatus(
+  const YAML::Node & robot_status_node,
+  kuka::external::control::kss::MotionStateXmlConfiguration & motion_state_xml) const
+{
+  using namespace kuka::external::control::kss;  // NOLINT
+
+  if (!robot_status_node)
+  {
+    return true;
+  }
+
+  const YAML::Node program_state_node = robot_status_node["program_state"];
+  const YAML::Node speed_scaling_node = robot_status_node["speed_scaling"];
+  if (!program_state_node || !speed_scaling_node)
+  {
+    RCLCPP_ERROR(
+      logger_,
+      "motion_state.robot_status requires both 'program_state' and 'speed_scaling' entries.");
+    return false;
+  }
+
+  for (const YAML::Node & node : {program_state_node, speed_scaling_node})
+  {
+    const YAML::Node xml_element = node["xml_element"];
+    const YAML::Node xml_attribute = node["xml_attribute"];
+    if (!xml_element || !xml_attribute)
+    {
+      RCLCPP_ERROR(
+        logger_,
+        "motion_state.robot_status entries require both 'xml_element' and 'xml_attribute'.");
+      return false;
+    }
+
+    MotionStateCustomFieldConfiguration field;
+    field.xml_element = xml_element.as<std::string>();
+    field.xml_attribute = xml_attribute.as<std::string>();
+    motion_state_xml.custom_fields.push_back(std::move(field));
   }
 
   return true;

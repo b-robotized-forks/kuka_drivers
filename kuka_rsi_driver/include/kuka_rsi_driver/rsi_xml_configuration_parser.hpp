@@ -62,6 +62,13 @@ private:
     const YAML::Node & gpio_node, std::size_t gpio_state_interface_count,
     kuka::external::control::kss::MotionStateXmlConfiguration & motion_state_xml) const;
 
+  // Maps to 2 entries in MotionStateXmlConfiguration::custom_fields, in this fixed order:
+  // [0] program_state, [1] speed_scaling. Requires an RSIVisual "Status"/"OV_PRO" object
+  // configured on the KRC side (see hardware_interface_rsi_base.hpp's kRobotStatusSensorName).
+  bool ParseRobotStatus(
+    const YAML::Node & robot_status_node,
+    kuka::external::control::kss::MotionStateXmlConfiguration & motion_state_xml) const;
+
   bool AppendJointFields(
     const YAML::Node & node, kuka::external::control::kss::MotionStateSignalType signal_type,
     std::vector<kuka::external::control::kss::MotionStateJointFieldConfiguration> & joint_fields)
