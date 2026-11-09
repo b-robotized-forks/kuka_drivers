@@ -111,24 +111,28 @@ int main(int argc, char ** argv)
           param.sched_priority);
       }
 
-      const rclcpp::Duration dt =
-        rclcpp::Duration::from_seconds(1.0 / controller_manager->get_update_rate());
-      std::chrono::milliseconds dt_ms{1000 / controller_manager->get_update_rate()};
-
       try
       {
         while (rclcpp::ok())
         {
+          // Use a fixed period for interpolation, as the interpolation cycle is also fixed on the
+          // controller side. Calculating the period from the actual time could cause jitter in the
+          // interpolated values
+          // TODO(Svastits): adjust dt for non-integer update rates, (e.g. 12 ms cycle time for RSI
+          // IPO mode)
+          const rclcpp::Duration dt =
+            rclcpp::Duration::from_seconds(1.0 / controller_manager->get_update_rate());
+
           if (is_configured)
           {
-            controller_manager->read(controller_manager->now(), dt);
-            controller_manager->update(controller_manager->now(), dt);
-            controller_manager->write(controller_manager->now(), dt);
+            controller_manager->read(controller_manager->get_trigger_clock()->now(), dt);
+            controller_manager->update(controller_manager->get_trigger_clock()->now(), dt);
+            controller_manager->write(controller_manager->get_trigger_clock()->now(), dt);
           }
           else
           {
-            controller_manager->update(controller_manager->now(), dt);
-            std::this_thread::sleep_for(dt_ms);
+            controller_manager->update(controller_manager->get_trigger_clock()->now(), dt);
+            std::this_thread::sleep_for(dt.to_chrono<std::chrono::nanoseconds>());
           }
         }
 
