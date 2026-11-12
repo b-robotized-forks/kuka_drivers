@@ -27,7 +27,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
   include
 )
 
-ament_target_dependencies(${PROJECT_NAME} controller_interface kuka_drivers_core kuka_driver_interfaces realtime_tools
+target_link_libraries(${PROJECT_NAME}
+  ${controller_interface_TARGETS}
+  ${kuka_drivers_core_TARGETS}
+  ${kuka_driver_interfaces_TARGETS}
+  ${realtime_tools_TARGETS}
 )
 target_link_libraries(${PROJECT_NAME} kuka_event_broadcaster_parameters)
 

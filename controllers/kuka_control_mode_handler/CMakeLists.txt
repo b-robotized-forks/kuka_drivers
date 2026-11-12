@@ -26,7 +26,10 @@ target_include_directories(${PROJECT_NAME} PRIVATE
   include
 )
 
-ament_target_dependencies(${PROJECT_NAME} controller_interface std_msgs kuka_drivers_core
+target_link_libraries(${PROJECT_NAME}
+  ${controller_interface_TARGETS}
+  ${std_msgs_TARGETS}
+  ${kuka_drivers_core_TARGETS}
 )
 target_link_libraries(${PROJECT_NAME} kuka_control_mode_handler_parameters)
 

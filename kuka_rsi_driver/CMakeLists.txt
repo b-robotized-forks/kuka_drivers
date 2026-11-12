@@ -44,17 +44,17 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE "KUKA_RSI_DRIVER_BUILDING_LIB
 # prevent pluginlib from using boost
 target_compile_definitions(${PROJECT_NAME} PUBLIC "PLUGINLIB__DISABLE_BOOST_FUNCTIONS")
 
-ament_target_dependencies(${PROJECT_NAME} hardware_interface kuka_drivers_core kuka-external-control-sdk)
+target_link_libraries(${PROJECT_NAME} ${hardware_interface_TARGETS} ${kuka_drivers_core_TARGETS})
 target_link_libraries(${PROJECT_NAME} Kuka::kuka-external-control-sdk yaml-cpp Eigen3::Eigen)
 
 # Shared library for robot_manager_base
 add_library(robot_manager_base STATIC src/robot_manager_base.cpp)
-ament_target_dependencies(
-  robot_manager_base
-  std_msgs
-  kuka_driver_interfaces
-  kuka_drivers_core
-  controller_manager_msgs)
+target_link_libraries(robot_manager_base
+  ${std_msgs_TARGETS}
+  ${kuka_driver_interfaces_TARGETS}
+  ${kuka_drivers_core_TARGETS}
+  ${controller_manager_msgs_TARGETS}
+)
 target_link_libraries(robot_manager_base kuka_drivers_core::communication_helpers)
 
 add_executable(robot_manager_node_extended src/robot_manager_node_extended.cpp)
@@ -85,7 +85,10 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gmock REQUIRED)
   ament_add_gmock(test_hardware_interface_exports test/test_hardware_interface_exports.cpp)
   target_link_libraries(test_hardware_interface_exports ${PROJECT_NAME})
-  ament_target_dependencies(test_hardware_interface_exports hardware_interface kuka_drivers_core)
+  target_link_libraries(test_hardware_interface_exports
+    ${hardware_interface_TARGETS}
+    ${kuka_drivers_core_TARGETS}
+  )
 endif()
 
 ## EXPORTS

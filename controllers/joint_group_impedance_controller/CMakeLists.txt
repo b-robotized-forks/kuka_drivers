@@ -26,7 +26,10 @@ target_include_directories(${PROJECT_NAME} PRIVATE
   include
 )
 
-ament_target_dependencies(${PROJECT_NAME} forward_command_controller kuka_drivers_core realtime_tools
+target_link_libraries(${PROJECT_NAME}
+  ${forward_command_controller_TARGETS}
+  ${kuka_drivers_core_TARGETS}
+  ${realtime_tools_TARGETS}
 )
 target_link_libraries(${PROJECT_NAME} joint_group_impedance_controller_parameters)
 

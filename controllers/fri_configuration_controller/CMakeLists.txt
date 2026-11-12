@@ -30,7 +30,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
   include
 )
 
-ament_target_dependencies(${PROJECT_NAME} controller_interface kuka_driver_interfaces kuka_drivers_core)
+target_link_libraries(${PROJECT_NAME}
+  ${controller_interface_TARGETS}
+  ${kuka_driver_interfaces_TARGETS}
+  ${kuka_drivers_core_TARGETS}
+)
 target_link_libraries(${PROJECT_NAME} fri_configuration_controller_parameters)
 
 # Causes the visibility macros to use dllexport rather than dllimport,
