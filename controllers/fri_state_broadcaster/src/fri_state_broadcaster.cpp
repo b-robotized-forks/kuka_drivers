@@ -159,12 +159,8 @@ controller_interface::return_type FRIStateBroadcaster::update(
 
   if (counter_++ == 10)
   {
-    if (state_publisher_->trylock())
-    {
-      state_msg_.states = current_states_;
-      state_publisher_->msg_ = state_msg_;
-      state_publisher_->unlockAndPublish();
-    }
+    state_msg_.states = current_states_;
+    state_publisher_->try_publish(state_msg_);
     counter_ = 0;
   }
 

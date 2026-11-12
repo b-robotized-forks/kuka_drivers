@@ -152,11 +152,7 @@ controller_interface::return_type EventBroadcaster::update(
       last_events_[i] = current_event;
       event_msg_.robot_name = event_robot_prefixes_[i];
       event_msg_.event = current_event;
-      if (event_publisher_->trylock())
-      {
-        event_publisher_->msg_ = event_msg_;
-        event_publisher_->unlockAndPublish();
-      }
+      event_publisher_->try_publish(event_msg_);
     }
   }
 

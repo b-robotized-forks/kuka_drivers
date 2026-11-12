@@ -123,11 +123,7 @@ controller_interface::return_type JointGroupImpedanceController::update(
       state_interfaces_[i].get_optional().value_or(commanded_joint_pos_.data[i]);
   }
 
-  if (commanded_joint_pos_publisher_->trylock())
-  {
-    commanded_joint_pos_publisher_->msg_ = commanded_joint_pos_;
-    commanded_joint_pos_publisher_->unlockAndPublish();
-  }
+  commanded_joint_pos_publisher_->try_publish(commanded_joint_pos_);
 
   return forward_command_controller::ForwardControllersBase::update(time, period);
 }

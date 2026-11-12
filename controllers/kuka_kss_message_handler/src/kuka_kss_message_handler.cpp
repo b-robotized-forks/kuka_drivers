@@ -143,12 +143,8 @@ ReturnType KssMessageHandler::update(const rclcpp::Time &, const rclcpp::Duratio
 
   if (++status_publish_counter_ >= STATUS_PUBLISH_TICK_COUNT)
   {
-    if (status_publisher_->trylock())
-    {
-      status_msg_.statuses = current_statuses_;
-      status_publisher_->msg_ = status_msg_;
-      status_publisher_->unlockAndPublish();
-    }
+    status_msg_.statuses = current_statuses_;
+    status_publisher_->try_publish(status_msg_);
     status_publish_counter_ = 0;
   }
 
