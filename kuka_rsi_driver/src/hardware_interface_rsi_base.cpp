@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cmath>
 #include <limits>
 #include <vector>
 
@@ -453,15 +454,25 @@ return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclc
     return return_type::OK;
   }
 
+  // A NaN command (no controller has written the interface yet) keeps the last sent value.
+  // The robot controller stops RSI when it receives a NaN correction.
+  const auto update_if_finite = [this](const std::string & name, double & value)
+  {
+    const double command = get_command<double>(name);
+    if (std::isfinite(command))
+    {
+      value = command;
+    }
+  };
   for (size_t i = 0; i < info_.joints.size(); i++)
   {
-    interface_data_.position_commands[i] = get_command<double>(joint_position_command_names_[i]);
-    interface_data_.velocity_commands[i] = get_command<double>(joint_velocity_command_names_[i]);
-    interface_data_.torque_commands[i] = get_command<double>(joint_effort_command_names_[i]);
+    update_if_finite(joint_position_command_names_[i], interface_data_.position_commands[i]);
+    update_if_finite(joint_velocity_command_names_[i], interface_data_.velocity_commands[i]);
+    update_if_finite(joint_effort_command_names_[i], interface_data_.torque_commands[i]);
   }
   for (size_t i = 0; i < gpio_command_names_.size(); i++)
   {
-    interface_data_.gpio_commands[i] = get_command<double>(gpio_command_names_[i]);
+    update_if_finite(gpio_command_names_[i], interface_data_.gpio_commands[i]);
   }
 
   uint32_t current_count = static_cast<uint32_t>(get_command<double>(interpolation_count_name_));
@@ -1003,6 +1014,18 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
     std::fill(interface_data_.torque_commands.begin(), interface_data_.torque_commands.end(), 0.0);
   }
   CopyGPIOStatesToCommands();
+  // Write the initial commands also to the command interfaces. Otherwise they stay NaN until a
+  // controller writes them.
+  for (size_t i = 0; i < info_.joints.size(); i++)
+  {
+    set_command(joint_position_command_names_[i], interface_data_.position_commands[i]);
+    set_command(joint_velocity_command_names_[i], interface_data_.velocity_commands[i]);
+    set_command(joint_effort_command_names_[i], interface_data_.torque_commands[i]);
+  }
+  for (size_t i = 0; i < gpio_command_names_.size(); i++)
+  {
+    set_command(gpio_command_names_[i], interface_data_.gpio_commands[i]);
+  }
   Write();
 
   runtime_state_.msg_received = false;
