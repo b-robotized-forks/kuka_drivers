@@ -92,6 +92,15 @@ RobotManagerBase::RobotManagerBase() : kuka_drivers_core::ROS2BaseLCNode("robot_
       return true;
     });
 
+  this->registerStaticParameter<bool>(
+    "set_controller_manager_update_rate", true,
+    kuka_drivers_core::ParameterSetAccessRights{false, false},
+    [this](const bool set_controller_manager_update_rate)
+    {
+      set_controller_manager_update_rate_ = set_controller_manager_update_rate;
+      return true;
+    });
+
   set_param_client_ = this->create_client<rcl_interfaces::srv::SetParameters>(
     controller_manager_name_ + "/set_parameters", rclcpp::SystemDefaultsQoS(), cbg_);
 
@@ -416,6 +425,15 @@ bool RobotManagerBase::ValidateCycleTime(CycleTime cycle_time)
 
 bool RobotManagerBase::ChangeCycleTime(CycleTime cycle_time)
 {
+  if (!set_controller_manager_update_rate_)
+  {
+    RCLCPP_INFO(
+      this->get_logger(),
+      "set_controller_manager_update_rate is false: the update rate of the controller manager is "
+      "not changed.");
+    return true;
+  }
+
   if (robot_models_.size() != 1)
   {
     RCLCPP_WARN(
