@@ -110,6 +110,7 @@ protected:
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr set_param_client_;
   std::vector<std::string> robot_models_;
   bool use_gpio_ = false;
+  bool set_controller_manager_update_rate_ = true;
   std::string position_controller_name_;
 
   kuka_drivers_core::ControllerHandler controller_handler_;
